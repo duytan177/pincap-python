@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+confluent-kafka
+elasticsearch
+mysql-connector-python
+tqdm
+requests
+google-generativeai
+pymysql
+sqlalchemy
+redis
