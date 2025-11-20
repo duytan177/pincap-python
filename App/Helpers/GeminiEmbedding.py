@@ -61,7 +61,7 @@ async def getDescriptionByAi(file: Optional[UploadFile] = None) -> str:
          ## RULES
          - Describe only visible elements (objects, people, setting, colors, actions).
          - Do NOT infer emotions, context, or background stories.
-         - Keep it under 100 words, simple but information-dense.
+         - Keep it under 50 words, simple but information-dense.
          - Do NOT say "an image of" or "this picture shows" — just describe directly.
          """,
         user_prompt="Describe this image briefly in English.",
