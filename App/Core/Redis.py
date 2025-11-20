@@ -1,5 +1,4 @@
 import os
-import asyncio
 from redis.asyncio import Redis
 
 
@@ -17,7 +16,7 @@ class RedisCore:
         return cls._instance
 
     def _connect(self):
-        redis_host = os.getenv("REDIS_HOST", os.getenv("ENV_URL_SERVICE"))
+        redis_host = os.getenv("REDIS_HOST", os.getenv("IP_SERVICE"))
         redis_port = int(os.getenv("REDIS_PORT", 6379))
         redis_password = os.getenv("REDIS_PASSWORD", "secret_redis")
         redis_db = int(os.getenv("REDIS_DB", 0))

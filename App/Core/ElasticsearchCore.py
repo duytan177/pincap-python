@@ -12,7 +12,7 @@ class ElasticsearchCore:
 
     @staticmethod
     def _connect():
-        es_host = os.getenv("ES_HOST", f"http://{os.getenv('ENV_URL_SERVICE', 'localhost')}:9200")
+        es_host = os.getenv("ES_HOST", f"http://{os.getenv('IP_SERVICE', 'localhost')}:9200")
         es_user = os.getenv("ES_USER")
         es_pass = os.getenv("ES_PASS")
 

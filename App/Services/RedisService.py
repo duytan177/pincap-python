@@ -2,8 +2,6 @@ import json
 import base64
 from App.Core.Redis import redis_core
 from App.Helpers.GeminiEmbedding import getEmbedding
-# from App.Helpers.GeminiEmbedding import get_gemini_embedding
-from App.Services.GeminiService import GeminiService
 
 
 class RedisService:
@@ -19,7 +17,7 @@ class RedisService:
     # 🔹 Generate key
     # -----------------------------
     def make_key(self, user_id: str, file_content: bytes) -> str:
-        hash_b64 = base64.urlsafe_b64encode(file_content).decode("utf-8")[:8]
+        hash_b64 = base64.urlsafe_b64encode(file_content).decode("utf-8")[:64]
         return f"user_{user_id}_{hash_b64}"
 
     # -----------------------------

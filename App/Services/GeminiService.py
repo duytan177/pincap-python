@@ -85,7 +85,10 @@ class GeminiService:
 
     async  def _call_gemini_api(self, payload: dict) -> dict:
         """Generic request caller for Gemini API"""
-        headers = {"Content-Type": "application/json"}
+        headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key
+                }
         response = requests.post(
             f"{self.base_url}?key={self.api_key}",
             headers=headers,
@@ -209,7 +212,7 @@ class GeminiService:
         payload = {
             "contents": prompt,
             "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"]
+                "responseModalities": ["TEXT"]
             },
         }
         data = await self._call_gemini_api(payload)

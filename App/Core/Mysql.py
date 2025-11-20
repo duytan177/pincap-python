@@ -20,7 +20,7 @@ class MySQLService:
     def _init_engine(self):
         MYSQL_USER = os.getenv("MYSQL_USER", "root")
         MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "root")
-        MYSQL_HOST = os.getenv("MYSQL_HOST", os.getenv("ENV_URL_SERVICE", "localhost"))
+        MYSQL_HOST = os.getenv("MYSQL_HOST", os.getenv("IP_SERVICE", "localhost"))
         MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
         MYSQL_DB = os.getenv("MYSQL_DB", "pincap")
 

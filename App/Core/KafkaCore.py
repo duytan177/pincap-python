@@ -36,6 +36,6 @@ class KafkaCore:
 
 
 # Singleton core instance
-url_kafka = os.getenv("ENV_URL_SERVICE")
+url_kafka = os.getenv("IP_SERVICE")
 port_kafka = os.getenv("KAFKA_PORT")
 kafka_core = KafkaCore(brokers=f"{url_kafka}:{port_kafka}")

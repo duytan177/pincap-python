@@ -38,7 +38,7 @@ async def getEmbedding(
 
 async def getDescriptionByAi(file: Optional[UploadFile] = None) -> str:
     print("🖼️ Generating caption from image before embedding...")
-    model = "gemini-2.0-flash-preview-image-generation"
+    model = "gemini-2.5-flash"
     generationConfig: dict = {
         "temperature": 0.9,
         "top_p": 0.95,
