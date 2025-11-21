@@ -25,6 +25,7 @@ class KafkaCore:
                 "bootstrap.servers": self.brokers,
                 "group.id": group_id,
                 "auto.offset.reset": offset_reset,
+                "max.poll.interval.ms": 60000
             }
             consumer = Consumer(conf)
             consumer.subscribe([topic])

@@ -216,7 +216,6 @@ class GeminiService:
             },
         }
         data = await self._call_gemini_api(payload)
-        print(data)
         return self._format_response(data, mode="embedding")
 
     # -----------------------------

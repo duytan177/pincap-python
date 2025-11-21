@@ -20,10 +20,10 @@ class ElasticsearchService:
         try:
             clean_doc = {k: v for k, v in document.items() if v is not None}
             res = self.client.index(index=index, id=id, document=clean_doc)
-            print(f"✅ Inserted document {id or res['_id']} into index '{index}'")
+            print(f"✅ Inserted document {id or res['_id']} into index '{index}'", flush=True)
             return res
         except Exception as e:
-            print(f"❌ Failed to insert document: {e}")
+            print(f"❌ Failed to insert document: {e}", flush=True)
             raise e
 
 
