@@ -28,6 +28,7 @@ class MediaIngestService:
                     "description": {"type": "text"},
                     "ai_description": {"type": "text"},
                     "tags": {"type": "keyword"},
+                    "is_deleted": {"type": "boolean"},
                     "embedding": {
                         "type": "dense_vector",
                         "dims": 768,
@@ -124,6 +125,7 @@ class MediaIngestService:
                 "ai_description": ai_description,
                 "tags": tag_name,
                 "embedding": embedding,
+                "is_deleted": False
             }
             return doc
         except Exception as e:
@@ -157,6 +159,7 @@ class MediaIngestService:
     async def process_event(self, event: dict):
         """Process a single event"""
         doc = await self._transform_event_to_doc(event)
+        print(doc, flush=True)
         if not doc:
             print(f"❌ transform event to doc error", flush=True)
             return

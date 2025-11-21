@@ -3,7 +3,7 @@ from App.Services.RedisService import RedisService
 from App.Services.ElasticsearchService import ElasticsearchService
 
 router = APIRouter(prefix="/api/v1", tags=["Test"])
-index_name = "media_embeddings"
+index_name = "media_embeddings_test_v3"
 mapping = {
     "mappings": {
         "properties": {
@@ -12,6 +12,8 @@ mapping = {
             "description": {"type": "text"},
             "ai_description": {"type": "text"},
             "tags": {"type": "keyword"},
+            "is_deleted": {"type": "boolean"},
+            "media_url": {"type": "keyword"},
             "embedding": {
                 "type": "dense_vector",
                 "dims": 768,
