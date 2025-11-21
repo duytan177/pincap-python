@@ -28,22 +28,23 @@ class KafkaConsumerService:
         self.poll_timeout = poll_timeout
 
         self.consumer = kafka_core.create_consumer(topic, group_id)
+        self.media_ingest_service = MediaIngestService("media_embeddings_test_v3")
 
     # -----------------------------------------
     # Handle a single event
     # -----------------------------------------
     async def handle_event(self, event: dict):
         print(f"📌 [Kafka Event] {event}", flush=True)
-        mediaIngest = MediaIngestService("media_embeddings_test_v3")
-        await  mediaIngest.process_event(event=event)
+        await self.media_ingest_service.process_event(event=event)
+        print("finished process event", flush=True)
 
     # -----------------------------------------
     # Handle batch of events
     # -----------------------------------------
-    def handle_batch(self, events: list):
+    async def handle_batch(self, events: list):
         print(f"📌 [Kafka Batch] {len(events)} events: {events}", flush=True)
-        mediaIngest = MediaIngestService("media_embeddings_test_v3")
-        mediaIngest.process_batch(events=events)
+        # mediaIngest = MediaIngestService("media_embeddings_test_v3")
+        # mediaIngest.process_batch(events=events)
 
     # -----------------------------------------
     # Main loop
@@ -97,7 +98,7 @@ class KafkaConsumerService:
             if msg is None:
                 # Check if timeout reached without new messages
                 if buffer and now - last_flush_time >= self.batch_timeout:
-                    self._flush_batch(buffer, offset_buffer)
+                    await self._flush_batch(buffer, offset_buffer)
                     buffer = []
                     offset_buffer = []
                     last_flush_time = now
@@ -117,7 +118,7 @@ class KafkaConsumerService:
 
             # Flush if batch full or timeout reached
             if buffer and (len(buffer) >= self.batch_size or now - last_flush_time >= self.batch_timeout):
-                self._flush_batch(buffer, offset_buffer)
+                await self._flush_batch(buffer, offset_buffer)
                 buffer = []
                 offset_buffer = []
                 last_flush_time = now
@@ -125,7 +126,7 @@ class KafkaConsumerService:
     # -----------------------------------------
     # Helper to flush batch and commit offsets
     # -----------------------------------------
-    def _flush_batch(self, buffer, offset_buffer):
-        self.handle_batch(buffer)
+    async def _flush_batch(self, buffer, offset_buffer):
+        await self.handle_batch(buffer)
         for msg in offset_buffer:
             self.consumer.commit(message=msg, asynchronous=False)

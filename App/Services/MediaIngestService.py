@@ -87,9 +87,6 @@ class MediaIngestService:
 
     async def _transform_event_to_doc(self, event_obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            # if event_obj.get("event") != "async_medias":
-            #     return None
-
             media_id = str(event_obj.get("media_id")) if event_obj.get("media_id") else None
             media_name = event_obj.get("media_name") or event_obj.get("name")
             description = event_obj.get("description")
@@ -112,10 +109,7 @@ class MediaIngestService:
                     ai_descriptions.append(desc)
                     await asyncio.sleep(0.5)
                 except Exception as e:
-                    print(f"⚠️ AI description generation failed for {upload.filename}: {e}")
-
-            # # Get AI description parallel not use because limit rate of gemini.
-            # ai_descriptions = await self._get_ai_descriptions(uploads, max_concurrent=3)
+                    print(f"⚠️ AI description generation failed for {upload.filename}: {e}", flush=True)
 
             ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
 
@@ -133,7 +127,7 @@ class MediaIngestService:
             }
             return doc
         except Exception as e:
-            print(f"❌ Failed to transform event to document: {e}")
+            print(f"❌ Failed to transform event to document: {e}", flush=True)
             return None
 
     # def process_batch(self, events: List[str], chunk_size: int = 200):
@@ -164,24 +158,9 @@ class MediaIngestService:
         """Process a single event"""
         doc = await self._transform_event_to_doc(event)
         if not doc:
-            print(f"❌ transform event to doc error")
+            print(f"❌ transform event to doc error", flush=True)
             return
         try:
             self.es_service.insert_document(self.index_name, doc["media_id"], doc)
         except Exception as e:
-            print(f"❌ Insert error: {e}")
-
-    async def _get_ai_descriptions(self, uploads: List[UploadFile], max_concurrent=3):
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        async def sem_desc(upload):
-            async with semaphore:
-                try:
-                    return await getDescriptionByAi(upload)
-
-                except Exception as e:
-                    print(f"⚠️ AI description failed for {upload.filename}: {e}")
-                    return None
-
-        results = await asyncio.gather(*(sem_desc(u) for u in uploads))
-        return [r for r in results if r]
+            print(f"❌ Insert error: {e}", flush=True)
