@@ -93,6 +93,7 @@ class MediaIngestService:
             media_name = event_obj.get("media_name") or event_obj.get("name")
             description = event_obj.get("description")
             tag_name = event_obj.get("tag_name") or event_obj.get("tags")
+            user_id = event_obj.get("user_id")
             # Chuẩn hóa media_urls thành list
             media_urls = event_obj.get("media_url")
             if isinstance(media_urls, str):
@@ -126,6 +127,7 @@ class MediaIngestService:
                 "ai_description": ai_description,
                 "tags": tag_name,
                 "embedding": embedding,
+                "user_id": user_id,
                 "is_deleted": False
             }
             return doc
