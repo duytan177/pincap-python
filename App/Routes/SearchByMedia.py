@@ -14,6 +14,7 @@ mapping = {
             "tags": {"type": "keyword"},
             "is_deleted": {"type": "boolean"},
             "media_url": {"type": "keyword"},
+            "user_id": {"type": "keyword"},
             "embedding": {
                 "type": "dense_vector",
                 "dims": 768,

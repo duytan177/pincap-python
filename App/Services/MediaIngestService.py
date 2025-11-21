@@ -29,6 +29,7 @@ class MediaIngestService:
                     "ai_description": {"type": "text"},
                     "tags": {"type": "keyword"},
                     "is_deleted": {"type": "boolean"},
+                    "user_id": {"type": "keyword"},
                     "embedding": {
                         "type": "dense_vector",
                         "dims": 768,
