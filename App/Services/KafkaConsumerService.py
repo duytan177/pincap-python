@@ -1,7 +1,8 @@
 import json
 import time
 from App.Core.KafkaCore import kafka_core
-
+from App.Services.MediaIngestService import MediaIngestService
+import asyncio
 
 class KafkaConsumerService:
     """
@@ -27,30 +28,33 @@ class KafkaConsumerService:
         self.poll_timeout = poll_timeout
 
         self.consumer = kafka_core.create_consumer(topic, group_id)
-        print("Consumer ready", flush=True)
 
     # -----------------------------------------
     # Handle a single event
     # -----------------------------------------
-    def handle_event(self, event: dict):
+    async def handle_event(self, event: dict):
         print(f"📌 [Kafka Event] {event}", flush=True)
+        mediaIngest = MediaIngestService("media_embeddings_test_v3")
+        await  mediaIngest.process_event(event=event)
 
     # -----------------------------------------
     # Handle batch of events
     # -----------------------------------------
     def handle_batch(self, events: list):
         print(f"📌 [Kafka Batch] {len(events)} events: {events}", flush=True)
+        mediaIngest = MediaIngestService("media_embeddings_test_v3")
+        mediaIngest.process_batch(events=events)
 
     # -----------------------------------------
     # Main loop
     # -----------------------------------------
-    def run(self):
+    async def run(self):
         print(f"🚀 Kafka worker started | topic={self.topic} | mode={self.handle_mode}", flush=True)
         try:
             if self.handle_mode == "realtime":
-                self._run_realtime()
+                await self._run_realtime()
             else:
-                self._run_batch()
+                await self._run_batch()
         except Exception as e:
             print(f"❌ Kafka worker stopped due to error: {e}", flush=True)
         finally:
@@ -60,19 +64,18 @@ class KafkaConsumerService:
     # -----------------------------------------
     # Realtime mode: process each event immediately
     # -----------------------------------------
-    def _run_realtime(self):
+    async def _run_realtime(self):
         print("🚀 Starting realtime loop...", flush=True)
         while True:
             msg = self.consumer.poll(self.poll_timeout)
             if msg is None:
-                time.sleep(0.5)
                 continue
             if msg.error():
                 print(f"⚠️ Kafka error: {msg.error()}", flush=True)
                 continue
             try:
                 data = json.loads(msg.value().decode("utf-8"))
-                self.handle_event(data)
+                await self.handle_event(data)
                 # Commit offset immediately
                 self.consumer.commit(message=msg, asynchronous=False)
             except Exception as e:
@@ -81,7 +84,7 @@ class KafkaConsumerService:
     # -----------------------------------------
     # Batch mode: collect events and process together
     # -----------------------------------------
-    def _run_batch(self):
+    async def _run_batch(self):
         buffer = []
         offset_buffer = []
         last_flush_time = time.time()
@@ -98,7 +101,7 @@ class KafkaConsumerService:
                     buffer = []
                     offset_buffer = []
                     last_flush_time = now
-                time.sleep(0.5)
+                await asyncio.sleep(0.5)
                 continue
 
             if msg.error():
