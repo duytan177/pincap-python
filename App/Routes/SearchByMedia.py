@@ -55,10 +55,10 @@ async def search_by_media(
     must_filters = [
         {"term": {"is_deleted": False}},
     ]
+    must_not_filters = []
 
-    must_not_filters = [
-        {"terms": {"user_id": blocked_user_ids}}
-    ]
+    if blocked_user_ids:
+        must_not_filters.append({"terms": {"user_id": blocked_user_ids}})
 
     result_data = es_service.search_embedding(index_name, embedding, must_filters, must_not_filters, from_=from_, size=size)
     return {
