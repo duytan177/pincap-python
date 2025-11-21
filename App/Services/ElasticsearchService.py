@@ -58,17 +58,23 @@ class ElasticsearchService:
             raise e
 
     # 🔹 Tìm kiếm vector
-    def search_embedding(self, index: str, query_vector: List[float], min_score: float|None = 0.8, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None):
+    def search_embedding(self, index: str, query_vector: List[float],  filters: List[dict] | None = None, must_not_filters: List[dict] | None = None , min_score: float|None = 0.8, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None):
         body = {
             "query": {
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "(cosineSimilarity(params.query_vector, 'embedding') + 1.0) / 2",
-                        "params": {"query_vector": query_vector}
+                "bool": {
+                    "filter": filters,
+                    "must_not": must_not_filters,
+                    "must": {
+                        "script_score": {
+                            "query": {"match_all": {}},
+                            "script": {
+                                "source": "(cosineSimilarity(params.query_vector, 'embedding') + 1.0) / 2",
+                                "params": {"query_vector": query_vector},
+                            },
+                        }
                     }
                 }
-            }
+            },
         }
 
         # 🔹 Chỉ thêm vào body khi có giá trị
