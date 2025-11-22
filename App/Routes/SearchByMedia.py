@@ -32,7 +32,7 @@ mapping = {
 async def search_by_media(
     user_id: str = Form(...),
     file: UploadFile = File(None),
-    from_: int|None = Form(1),
+    from_: int|None = Form(0),
     size: int|None = Form(20)
 ):
     redis_service = RedisService()
