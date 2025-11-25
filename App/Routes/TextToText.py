@@ -16,9 +16,11 @@ async def text_to_text(request: TextToTextRequest):
                               "temperature": 0.9,
                               "top_p": 0.95,
                               "top_k": 40,
-                              "max_output_tokens": 1024
-                            }
-        model = "gemini-2.0-flash"
+                              "max_output_tokens": 1024,
+                              "responseModalities": ["TEXT"]
+
+        }
+        model = "gemini-2.5-flash"
         geminiService = GeminiService(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", generationConfig)
         system_prompt = request.system_prompt
         user_prompt = request.user_prompt

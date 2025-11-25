@@ -181,12 +181,13 @@ class GeminiService:
 
     async def textToText(self, prompt: dict) -> str:
         """Generate text output"""
+        generation =  self.generationConfig
         payload = {
             "contents": prompt,
-            "generationConfig": self.generationConfig,
+            "generationConfig": generation,
         }
 
-        data = self._call_gemini_api(payload)
+        data = await self._call_gemini_api(payload)
         return self._format_response(data, mode="text")
 
     async def textToImage(
@@ -197,11 +198,11 @@ class GeminiService:
         payload = {
             "contents": prompt,
             "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"]
+                "responseModalities": ["IMAGE"]
             },
         }
 
-        data = self._call_gemini_api(payload)
+        data = await self._call_gemini_api(payload)
         return self._format_response(data, mode="image")
 
     async def textWithImageToDescription(

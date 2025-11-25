@@ -2,6 +2,7 @@ import io
 import json
 import mimetypes
 from typing import List, Dict, Any, Optional
+import numpy as np
 
 import requests
 import asyncio
@@ -101,6 +102,15 @@ class MediaIngestService:
             elif not isinstance(media_urls, list):
                 media_urls = []
 
+            # type image popular
+            image_extensions = (
+                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+                ".heic", ".heif", ".svg", ".ico", ".jfif", ".pjpeg", ".pjp", ".avif"
+            )
+
+            # only keep image
+            media_urls = [url for url in media_urls if isinstance(url, str) and url.lower().endswith(image_extensions)]
+
             # Download tất cả media files
             uploads = await self._download_all_uploadfiles(media_urls)
 
@@ -114,11 +124,45 @@ class MediaIngestService:
                 except Exception as e:
                     print(f"⚠️ AI description generation failed for {upload.filename}: {e}", flush=True)
 
+            # merge caption
             ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
 
-            # Build embedding text
-            embed_text = self._build_embedding_text(media_name or "", description or "", ai_description or "", tag_name or "")
-            embedding = await getEmbedding(text=embed_text)
+            # Text metadata
+            text_parts = [
+                media_name or "",
+                description or "",
+                tag_name or ""
+            ]
+            text_content = " ".join([t for t in text_parts if t])
+
+            # =============================
+            #  call parallel 2 embedding
+            # =============================
+            image_embedding_task = getEmbedding(text=ai_description)
+            text_embedding_task = getEmbedding(text=text_content)
+
+            image_embedding, text_embedding = await asyncio.gather(
+                image_embedding_task,
+                text_embedding_task
+            )
+
+            # =============================
+            #  FUSION 7 : 3
+            # =============================
+            embedding = fuse_embeddings(
+                image_embedding,
+                text_embedding,
+                w_img=0.7,
+                w_text=0.3
+            )
+
+
+            #
+            # ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
+            #
+            # # Build embedding text
+            # embed_text = self._build_embedding_text(media_name or "", description or "", ai_description or "", tag_name or "")
+            # embedding = await getEmbedding(text=embed_text)
 
             doc = {
                 "media_id": media_id,
@@ -170,3 +214,16 @@ class MediaIngestService:
             self.es_service.insert_document(self.index_name, doc["media_id"], doc)
         except Exception as e:
             print(f"❌ Insert error: {e}", flush=True)
+
+def fuse_embeddings(img_emb, text_emb, w_img=0.7, w_text=0.3):
+    img_emb = np.array(img_emb)
+    text_emb = np.array(text_emb)
+
+    fused = (img_emb * w_img) + (text_emb * w_text)
+
+    # normalize L2
+    norm = np.linalg.norm(fused)
+    if norm > 0:
+        fused = fused / norm
+
+    return fused.tolist()
