@@ -17,7 +17,7 @@ class RedisService:
     # 🔹 Generate key
     # -----------------------------
     def make_key(self, user_id: str, file_content: bytes) -> str:
-        hash_b64 = base64.urlsafe_b64encode(file_content).decode("utf-8")[:64]
+        hash_b64 = base64.urlsafe_b64encode(file_content).decode("utf-8")
         return f"user_{user_id}_{hash_b64}"
 
     # -----------------------------

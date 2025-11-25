@@ -11,3 +11,4 @@ google-generativeai
 pymysql
 sqlalchemy
 redis
+numpy
