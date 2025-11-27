@@ -1,36 +1,40 @@
-from fastapi import APIRouter, HTTPException, UploadFile, Form, File
-from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
-from App.Services.GeminiService import GeminiService
+from fastapi import APIRouter, HTTPException, UploadFile, Form, File
+
+from App.Services.CFWorkerService import CFWorkerService
 
 router = APIRouter(prefix="/api/v1", tags=["TextToImage"])
-
-class TextToImageRequest(BaseModel):
-    system_prompt: str
-    user_prompt: str
-    files: List[UploadFile] = File(None)
-
 
 
 @router.post("/image/generate")
 async def text_to_image(
-    system_prompt: str = Form(...),
+    system_prompt: Optional[str] = Form(None),
     user_prompt: str = Form(...),
+    size: str = Form("512x512"),
     files: List[UploadFile] = File(None),
 ):
     try:
-        generationConfig: dict = {
-                              "temperature": 0.9,
-                              "top_p": 0.95,
-                              "top_k": 40,
-                              "max_output_tokens": 1024
-                            }
-        model = "gemini-2.0-flash-preview-image-generation"
-        geminiService = GeminiService(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", generationConfig)
+        # 🔹 Parse size "WxH"
+        size_parts = size.split("x")
+        width = int(size_parts[0]) if len(size_parts) > 0 else 512
+        height = int(size_parts[1]) if len(size_parts) > 1 else 512
 
-        prompt = geminiService.buildPrompt(system_prompt, user_prompt, files=files)
-        response = await geminiService.textToImage(prompt)
-        return {"data": response}
+        # 🔹 Prepare CFWorkerService
+        cf_service = CFWorkerService("https://pincap.tanduyle123123.workers.dev")
+
+        # 🔹 Read first file bytes if exists
+        file = files[0] if files else None
+        # 🔹 Call CF Worker
+        img_base64 = await cf_service.generate_image(
+            prompt=user_prompt,
+            action="generate",
+            image_file=file,
+            width=width,
+            height=height,
+        )
+
+        return {"data": img_base64}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
