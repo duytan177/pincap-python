@@ -51,7 +51,6 @@ async def search_by_media(
     blocked_rows = mysql.execute_raw_sql(query, params={"user_id": user_id, "user_status": "0"})
 
     blocked_user_ids: List[str] = [r["blocked_user_id"] for r in blocked_rows]
-    print(blocked_user_ids)
     must_filters = [
         {"term": {"is_deleted": False}},
     ]
@@ -61,7 +60,13 @@ async def search_by_media(
         must_not_filters.append({"terms": {"user_id": blocked_user_ids}})
 
     result_data = es_service.search_embedding(index_name, embedding, must_filters, must_not_filters, from_=from_, size=size)
+
+    formatted = es_service.format_media_ids(result_data, from_=from_, size=size)
+
     return {
-        "data": result_data,
+        "media_ids": formatted["media_ids"],
+        "has_more": formatted["has_more"],
+        "total": formatted["total"],
         "message": "success"
     }
+

@@ -12,3 +12,4 @@ pymysql
 sqlalchemy
 redis
 numpy
+aiohttp

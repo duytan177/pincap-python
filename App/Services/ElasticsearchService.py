@@ -58,7 +58,7 @@ class ElasticsearchService:
             raise e
 
     # 🔹 Tìm kiếm vector
-    def search_embedding(self, index: str, query_vector: List[float],  filters: List[dict] | None = None, must_not_filters: List[dict] | None = None , min_score: float|None = 0.8, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None):
+    def search_embedding(self, index: str, query_vector: List[float],  filters: List[dict] | None = None, must_not_filters: List[dict] | None = None , min_score: float|None = 0.8, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None) -> dict:
         body = {
             "query": {
                 "bool": {
@@ -90,3 +90,28 @@ class ElasticsearchService:
         res = self.client.search(index=index, body=body)
 
         return res
+
+    # 🔹 Format result search, only array media_id
+    def format_media_ids(self, data_embedding: dict, from_: int|None = None, size: int|None = 20 ) -> dict:
+        """
+        Chuyển kết quả Elasticsearch search thành list media_id
+        """
+        # Lấy danh sách media_id duy nhất
+        media_ids = list({
+            hit["_source"]["media_id"]
+            for hit in data_embedding.get("hits", {}).get("hits", [])
+            if "_source" in hit and "media_id" in hit["_source"]
+        })
+
+        # Tổng số kết quả trong ES
+        total_hits = data_embedding.get("hits", {}).get("total", {}).get("value", 0)
+
+        # Kiểm tra còn dữ liệu để phân trang không
+        has_more = (from_ + size) < total_hits
+
+
+        return {
+            "media_ids": media_ids,
+            "has_more": has_more,
+            "total": total_hits
+        }
