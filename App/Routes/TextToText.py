@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from App.Services.GeminiService import GeminiService
@@ -6,7 +8,7 @@ router = APIRouter(prefix="/api/v1", tags=["TextToText"])
 
 
 class TextToTextRequest(BaseModel):
-    system_prompt: str
+    system_prompt: Optional[str] = None  # Cho phép null
     user_prompt: str
 
 @router.post("/text-to-text")
@@ -16,7 +18,6 @@ async def text_to_text(request: TextToTextRequest):
                               "temperature": 0.9,
                               "top_p": 0.95,
                               "top_k": 40,
-                              "max_output_tokens": 1024,
                               "responseModalities": ["TEXT"]
 
         }
@@ -25,6 +26,7 @@ async def text_to_text(request: TextToTextRequest):
         system_prompt = request.system_prompt
         user_prompt = request.user_prompt
         prompt = geminiService.buildPrompt(system_prompt, user_prompt)
+        print(prompt)
 
         response = await geminiService.textToText(prompt)
         return {"data": response}
