@@ -26,7 +26,6 @@ async def text_to_text(request: TextToTextRequest):
         system_prompt = request.system_prompt
         user_prompt = request.user_prompt
         prompt = geminiService.buildPrompt(system_prompt, user_prompt)
-        print(prompt)
 
         response = await geminiService.textToText(prompt)
         return {"data": response}
