@@ -102,7 +102,6 @@ class ElasticsearchService:
             for hit in data_embedding.get("hits", {}).get("hits", [])
             if "_source" in hit and "media_id" in hit["_source"]
         })
-
         # Tổng số kết quả trong ES
         total_hits = data_embedding.get("hits", {}).get("total", {}).get("value", 0)
 
