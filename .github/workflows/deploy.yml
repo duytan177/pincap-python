@@ -38,7 +38,7 @@ jobs:
           echo "Pulling the latest code from the master branch"
           git pull origin main || { echo "Git pull failed"; exit 1; }
 
-          docker compose up --build
+          docker compose up -d --build
 
           echo "Deployment completed successfully"
         EOSSH
