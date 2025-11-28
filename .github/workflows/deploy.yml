@@ -1,9 +1,9 @@
-name: Deploy Laravel App to Server
+name: Deploy Laravel python App to Server
 
 on:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   deploy:
