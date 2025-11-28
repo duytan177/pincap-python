@@ -20,6 +20,9 @@ jobs:
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key_python.pem
         chmod 600 ~/.ssh/deploy_key_python.pem
 
+    - name: Check SERVER_IP
+      run: echo "Server IP is ${{ secrets.SERVER_IP }}"
+
     - name: Add known hosts
       run: |
         ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts_python
