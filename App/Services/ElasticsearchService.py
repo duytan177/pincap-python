@@ -26,6 +26,43 @@ class ElasticsearchService:
             print(f"❌ Failed to insert document: {e}", flush=True)
             raise e
 
+    # 🔹 Get document by ID
+    def get_document_by_id(self, index: str, id: str):
+        """
+        Tìm và trả về document theo ID.
+        Trả về None nếu không tồn tại.
+        """
+        try:
+            if not self.client.exists(index=index, id=id):
+                return None
+
+            res = self.client.get(index=index, id=id)
+            return res["_source"]
+
+        except Exception as e:
+            print(f"❌ Failed to get document {id}: {e}", flush=True)
+            return None
+
+    # 🔹 Upsert 1 doc (insert if not exists, update if exists)
+    def upsert_document(self, index: str, id: str, document: Dict[str, Any]):
+        """
+        ✅ Upsert document: nếu tồn tại thì update, nếu chưa có thì tạo mới
+        """
+        try:
+            clean_doc = {k: v for k, v in document.items() if v is not None}
+            res = self.client.update(
+                index=index,
+                id=id,
+                body={
+                    "doc": clean_doc,
+                    "doc_as_upsert": True  # 🔹 key để upsert
+                }
+            )
+            print(f"✅ Upserted document {id} into index '{index}'", flush=True)
+            return res
+        except Exception as e:
+            print(f"❌ Failed to upsert document: {e}", flush=True)
+            raise e
 
     # 🔹 Insert theo batch (chunk)
     def insert_bulk_documents(self, index: str, documents: List[Dict[str, Any]], chunk_size: int = 500):

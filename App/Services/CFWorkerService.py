@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import os
 import uuid
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from App.Helpers.GeminiEmbedding import getDescriptionByAi
 
 
 class CFWorkerService:
@@ -113,9 +115,18 @@ class CFWorkerService:
         grid_image = np.vstack(grid_rows)
 
         _, buffer = cv2.imencode(".jpg", grid_image, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
-        return base64.b64encode(buffer).decode("utf-8")
 
-    def extract_and_describe(self, video_url: str):
+        # return base64
+        # return base64.b64encode(buffer).decode("utf-8")
+
+        file_like = io.BytesIO(buffer.tobytes())
+
+        # Trả về UploadFile
+        return StarletteUploadFile(filename="test.jpg", file=file_like)
+
+        # return base64.b64encode(buffer).decode("utf-8")
+
+    async def extract_and_describe(self, video_url: str):
         TEMP_PATH = f"temp_video_{uuid.uuid4().hex}.mp4"
 
         try:
@@ -153,25 +164,56 @@ class CFWorkerService:
             grid_rows = (len(frames_base64) + grid_cols - 1) // grid_cols
 
             grid_base64 = self.merge_frames_grid(frames_base64, (grid_rows, grid_cols))
+            system_prompt = """
+            You are a video captioning assistant.
+            
+            ## TASK
+            Given an image that is a collage of multiple frames from a video, generate a coherent English description of the video content. 
+            Treat the image as a representation of the video flow, and write the description as if you are watching the video in real time.
+            
+            ## RULES
+            - Describe visible objects, people, actions, movements, and settings.
+            - Do NOT mention that the input is an image, collage, or frames.
+            - Do NOT invent emotions, background stories, or assumptions.
+            - Keep it concise, clear, and flowing like a short narration.
+            - Use complete sentences and natural language.
+            """
 
-            payload = {
-                "image": grid_base64,
-                "prompt": (
-                    "Describe the video naturally and coherently, as if watching it in real time. "
-                    "Do NOT mention frames or images — write it like a real flowing video."
-                ),
-                "top_p": 0.8,
-                "top_k": 20,
-                "presence_penalty": 1.0,
-                "max_tokens": 1000,
-            }
+            user_prompt = """
+            Describe the video content naturally and coherently, as if you are watching it in real time. 
+Focus only on visible actions, objects, people, movements, and settings. 
+Do NOT mention frames, images, or that it is a collage. 
+Do NOT invent emotions, background stories, or assumptions. 
+Keep the description concise, flowing like a short narration in complete sentences.
+"""
+            description = await getDescriptionByAi(grid_base64,system_prompt, user_prompt)
+            return description
 
-            worker_resp = requests.post(self.worker_url, json=payload)
 
-            if worker_resp.status_code != 200:
-                return {"error": f"Worker error: {worker_resp.text}"}
-
-            return worker_resp.json()
+            # call by cloudfalre worker ai
+            # payload = {
+            #     "image": grid_base64,
+            #     "prompt": (
+            #         "Describe the video naturally and coherently, as if watching it in real time. "
+            #         "Do NOT mention frames or images — write it like a real flowing video."
+            #     ),
+            #     "top_p": 0.8,
+            #     "top_k": 20,
+            #     "presence_penalty": 1.0,
+            #     "max_tokens": 1000,
+            # }
+            #
+            # worker_resp = requests.post(self.worker_url, json=payload)
+            #
+            # if worker_resp.status_code != 200:
+            #     return {"error": f"Worker error: {worker_resp.text}"}
+            #
+            # # Lấy JSON
+            # data = worker_resp.json()
+            #
+            # # Only description
+            # description = data.get("description", None)
+            # return description
 
         except Exception as e:
             return {"error": str(e)}
