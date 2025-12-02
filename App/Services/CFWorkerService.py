@@ -130,12 +130,14 @@ class CFWorkerService:
         TEMP_PATH = f"temp_video_{uuid.uuid4().hex}.mp4"
 
         try:
-            resp = requests.get(video_url)
-            if resp.status_code != 200:
-                return {"error": "Failed to download video"}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(video_url) as resp:
+                    if resp.status != 200:
+                        return {"error": "Failed to download video"}
+                    content = await resp.read()
 
             with open(TEMP_PATH, "wb") as f:
-                f.write(resp.content)
+                f.write(content)
 
             cap = cv2.VideoCapture(TEMP_PATH)
             if not cap.isOpened():
@@ -222,5 +224,5 @@ Keep the description concise, flowing like a short narration in complete sentenc
             if os.path.exists(TEMP_PATH):
                 try:
                     os.remove(TEMP_PATH)
-                except:
-                    pass
+                except (OSError, PermissionError) as e:
+                    print(f"⚠️ Failed to remove temporary file {TEMP_PATH}: {e}", flush=True)

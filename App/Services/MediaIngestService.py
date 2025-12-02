@@ -141,13 +141,12 @@ class MediaIngestService:
                 # Video pipeline
                 async def process_videos(indexed_list):
                     descriptions = []
-
+                    detect_service = CFWorkerService(
+                        worker_url=os.getenv("CLOUDFLARE_WORKER_PINCAP_DETECT_VIDEO")
+                    )
                     for idx, url in indexed_list:
                         try:
                             print(f"video #{url}", flush=True)
-                            detect_service = CFWorkerService(
-                                worker_url=os.getenv("CLOUDFLARE_WORKER_PINCAP_DETECT_VIDEO")
-                            )
                             description = await detect_service.extract_and_describe(url)
                             print(description)
                             descriptions.append((idx, description))
