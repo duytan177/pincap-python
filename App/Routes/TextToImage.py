@@ -3,9 +3,11 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, Form, File
 
 from App.Services.CFWorkerService import CFWorkerService
+import os
 
 router = APIRouter(prefix="/api/v1", tags=["TextToImage"])
 
+CLOUDFLARE_WORKER_URL = os.getenv("CLOUDFLARE_WORKER_PINCAP")
 
 @router.post("/image/generate")
 async def text_to_image(
@@ -21,7 +23,7 @@ async def text_to_image(
         height = int(size_parts[1]) if len(size_parts) > 1 else 512
 
         # 🔹 Prepare CFWorkerService
-        cf_service = CFWorkerService("https://pincap.tanduyle123123.workers.dev")
+        cf_service = CFWorkerService(CLOUDFLARE_WORKER_URL)
 
         # 🔹 Read first file bytes if exists
         file = files[0] if files else None
