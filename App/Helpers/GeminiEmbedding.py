@@ -36,14 +36,14 @@ async def getEmbedding(
 
     return []
 
-async def getDescriptionByAi(file: Optional[UploadFile] = None) -> str:
+async def getDescriptionByAi(file: Optional[UploadFile] = None, system_prompt: str = "", user_prompt: str = "") -> str:
     print("🖼️ Generating caption from image before embedding...", flush=True)
-    model = "gemini-2.5-flash"
+    model = "gemini-2.0-flash"
     generationConfig: dict = {
-        "temperature": 0.9,
+        "temperature": 0.0,
         "top_p": 0.95,
         "top_k": 40,
-        "max_output_tokens": 1024
+        "max_output_tokens": 5000
     }
 
     # Dùng model text để mô tả ảnh
@@ -52,8 +52,8 @@ async def getDescriptionByAi(file: Optional[UploadFile] = None) -> str:
         generationConfig=generationConfig
     )
 
-    prompt = gemini_text.buildPrompt(
-        system_prompt="""
+    # Default prompts nếu not pass
+    default_system_prompt = """
          You are an image captioning assistant.
          ## TASK
          Generate a short, factual English description of the image content.
@@ -63,8 +63,16 @@ async def getDescriptionByAi(file: Optional[UploadFile] = None) -> str:
          - Do NOT infer emotions, context, or background stories.
          - Keep it under 50 words, simple but information-dense.
          - Do NOT say "an image of" or "this picture shows" — just describe directly.
-         """,
-        user_prompt="Describe this image briefly in English.",
+         """
+
+    default_user_prompt = "Describe this image briefly in English."
+
+    system_prompt = system_prompt or default_system_prompt
+    user_prompt = user_prompt or default_user_prompt
+
+    prompt = gemini_text.buildPrompt(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
         files=[file]
     )
     caption = await gemini_text.textWithImageToDescription(prompt)

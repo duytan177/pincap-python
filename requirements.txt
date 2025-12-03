@@ -9,5 +9,4 @@ requests
 pymysql
 sqlalchemy
 redis
-numpy
 aiohttp

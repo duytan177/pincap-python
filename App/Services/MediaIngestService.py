@@ -8,7 +8,9 @@ import requests
 import asyncio
 from fastapi import UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
+import os
 
+from App.Services.CFWorkerService import CFWorkerService
 from App.Services.ElasticsearchService import ElasticsearchService
 from App.Helpers.GeminiEmbedding import getEmbedding, getDescriptionByAi
 
@@ -95,38 +97,78 @@ class MediaIngestService:
             description = event_obj.get("description")
             tag_name = event_obj.get("tag_name") or event_obj.get("tags")
             user_id = event_obj.get("user_id")
-            # Chuẩn hóa media_urls thành list
-            media_urls = event_obj.get("media_url")
-            if isinstance(media_urls, str):
-                media_urls = [media_urls]
-            elif not isinstance(media_urls, list):
-                media_urls = []
+            existing_doc = self.es_service.get_document_by_id(self.index_name, media_id)
+            if existing_doc is None:
+                # Chuẩn hóa media_urls thành list
+                media_urls = event_obj.get("media_url")
+                if isinstance(media_urls, str):
+                    media_urls = [media_urls]
+                elif not isinstance(media_urls, list):
+                    media_urls = []
 
-            # type image popular
-            image_extensions = (
-                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
-                ".heic", ".heif", ".svg", ".ico", ".jfif", ".pjpeg", ".pjp", ".avif"
-            )
+                # ---------- PROCESS PARALLEL GET DESCRIPTION FOR IMAGE AND VIDEO---------------
+                # popular extensions
+                image_extensions = (
+                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+                    ".heic", ".heif", ".svg", ".ico", ".jfif", ".pjpeg", ".pjp", ".avif"
+                )
 
-            # only keep image
-            media_urls = [url for url in media_urls if isinstance(url, str) and url.lower().endswith(image_extensions)]
+                video_extensions = (
+                    ".mp4", ".mov", ".wmv", ".avi", ".flv", ".mkv", ".webm", ".m4v"
+                )
 
-            # Download tất cả media files
-            uploads = await self._download_all_uploadfiles(media_urls)
+                # -------------------------------
+                # Save by original index
+                indexed_urls = [(i, url) for i, url in enumerate(media_urls) if isinstance(url, str)]
+                images = [(i, url) for i, url in indexed_urls if url.lower().endswith(image_extensions)]
+                videos = [(i, url) for i, url in indexed_urls if url.lower().endswith(video_extensions)]
 
-            # # Lấy AI description cho tất cả media
-            ai_descriptions = []
-            for upload in uploads:
-                try:
-                    desc = await getDescriptionByAi(upload)
-                    ai_descriptions.append(desc)
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    print(f"⚠️ AI description generation failed for {upload.filename}: {e}", flush=True)
+                # -------------------------------
+                # Image pipeline
+                async def process_images(indexed_list):
+                    uploads = await self._download_all_uploadfiles([url for i, url in indexed_list])
+                    descriptions = []
+                    for idx, upload in zip([i for i, _ in indexed_list], uploads):
+                        try:
+                            desc = await getDescriptionByAi(upload)
+                            descriptions.append((idx, desc))
+                        except Exception as e:
+                            print(f"⚠️ AI description failed for image {upload.filename}: {e}", flush=True)
+                            descriptions.append((idx, None))
+                    return descriptions
 
-            # merge caption
-            ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
+                # -------------------------------
+                # Video pipeline
+                async def process_videos(indexed_list):
+                    descriptions = []
+                    detect_service = CFWorkerService(
+                        worker_url=os.getenv("CLOUDFLARE_WORKER_PINCAP_DETECT_VIDEO")
+                    )
+                    for idx, url in indexed_list:
+                        try:
+                            print(f"video #{url}", flush=True)
+                            description = await detect_service.extract_and_describe(url)
+                            print(description)
+                            descriptions.append((idx, description))
+                        except Exception as e:
+                            print(f"⚠️ AI description failed for video {url}: {e}", flush=True)
+                            descriptions.append((idx, None))
+                    return descriptions
 
+                # -------------------------------
+                # Run parallel
+                image_task = asyncio.create_task(process_images(images))
+                video_task = asyncio.create_task(process_videos(videos))
+
+                image_results, video_results = await asyncio.gather(image_task, video_task)
+                # -------------------------------
+                # Merge and order by original media_urls
+                all_results = image_results + video_results
+                ai_descriptions = [desc for idx, desc in sorted(all_results, key=lambda x: x[0])]
+
+                ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
+            else:
+                ai_description = existing_doc.get("ai_description")
             # Text metadata
             text_parts = [
                 media_name or "",
@@ -138,6 +180,7 @@ class MediaIngestService:
             # =============================
             #  call parallel 2 embedding
             # =============================
+
             image_embedding_task = getEmbedding(text=ai_description)
             text_embedding_task = getEmbedding(text=text_content)
 
@@ -155,14 +198,6 @@ class MediaIngestService:
                 w_img=0.7,
                 w_text=0.3
             )
-
-
-            #
-            # ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
-            #
-            # # Build embedding text
-            # embed_text = self._build_embedding_text(media_name or "", description or "", ai_description or "", tag_name or "")
-            # embedding = await getEmbedding(text=embed_text)
 
             doc = {
                 "media_id": media_id,
@@ -211,7 +246,11 @@ class MediaIngestService:
             print(f"❌ transform event to doc error", flush=True)
             return
         try:
-            self.es_service.insert_document(self.index_name, doc["media_id"], doc)
+            self.es_service.upsert_document(
+                index=self.index_name,
+                id=doc["media_id"],
+                document=doc
+            )
         except Exception as e:
             print(f"❌ Insert error: {e}", flush=True)
 
