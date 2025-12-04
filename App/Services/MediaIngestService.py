@@ -175,19 +175,28 @@ class MediaIngestService:
                 description or "",
                 tag_name or ""
             ]
-            text_content = " ".join([t for t in text_parts if t])
+            text_content = " ".join([t for t in text_parts if t]).strip()
 
             # =============================
-            #  call parallel 2 embedding
+            #   Build embedding tasks
             # =============================
 
-            image_embedding_task = getEmbedding(text=ai_description)
-            text_embedding_task = getEmbedding(text=text_content)
+            tasks = []
 
-            image_embedding, text_embedding = await asyncio.gather(
-                image_embedding_task,
-                text_embedding_task
-            )
+            # image embedding
+            tasks.append(getEmbedding(text=ai_description))
+
+            # text embedding (only run if text_content != "")
+            if text_content:
+                tasks.append(getEmbedding(text=text_content))
+            # =============================
+            #   Run tasks parallel
+            # =============================
+            results = await asyncio.gather(*tasks)
+
+            image_embedding = results[0]
+            text_embedding = results[1] if len(results) > 1 else None
+
 
             # =============================
             #  FUSION 7 : 3
@@ -255,12 +264,21 @@ class MediaIngestService:
             print(f"❌ Insert error: {e}", flush=True)
 
 def fuse_embeddings(img_emb, text_emb, w_img=0.7, w_text=0.3):
-    img_emb = np.array(img_emb)
-    text_emb = np.array(text_emb)
+    """
+    Fuse 2 embeddings an toàn, hỗ trợ text_emb = None.
+    Nếu text_emb = None → trả về img_emb (L2 normalized).
+    """
 
-    fused = (img_emb * w_img) + (text_emb * w_text)
+    img_emb = np.array(img_emb, dtype=float)
 
-    # normalize L2
+    # Nếu không có text embedding → dùng toàn bộ img_emb
+    if text_emb is None:
+        fused = img_emb
+    else:
+        text_emb = np.array(text_emb, dtype=float)
+        fused = (img_emb * w_img) + (text_emb * w_text)
+
+    # Normalize
     norm = np.linalg.norm(fused)
     if norm > 0:
         fused = fused / norm
