@@ -30,6 +30,9 @@ class KafkaConsumerService:
         self.consumer = kafka_core.create_consumer(topic, group_id)
         index_name = os.getenv("ELASTIC_SEARCH_INDEX")
 
+        if not index_name:
+            raise ValueError("ELASTIC_SEARCH_INDEX environment variable must be set")
+
         self.media_ingest_service = MediaIngestService(index_name)
 
     # -----------------------------------------
