@@ -70,7 +70,7 @@ async def search_media_by_text(req: SearchTextRequest):
     if blocked_user_ids:
         must_not_filters.append({"terms": {"user_id": blocked_user_ids}})
 
-    result_data = es_service.search_embedding(index_name, embedding, must_filters, must_not_filters,min_score=0.83, from_=from_, size=size)
+    result_data = es_service.search_embedding(index_name, embedding, must_filters, must_not_filters,min_score=0.79, from_=from_, size=size)
 
     formatted = es_service.format_media_ids(result_data, from_=from_, size=size)
 
