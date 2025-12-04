@@ -3,9 +3,9 @@ from typing import List
 from App.Core.Mysql import MySQLService
 from App.Services.RedisService import RedisService
 from App.Services.ElasticsearchService import ElasticsearchService
-
+import os
 router = APIRouter(prefix="/api/v1", tags=["Test"])
-index_name = "media_embeddings_test_v3"
+index_name = os.getenv("ELASTIC_SEARCH_INDEX")
 mapping = {
     "mappings": {
         "properties": {

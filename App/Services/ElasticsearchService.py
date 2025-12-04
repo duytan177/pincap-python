@@ -95,7 +95,7 @@ class ElasticsearchService:
             raise e
 
     # 🔹 Tìm kiếm vector
-    def search_embedding(self, index: str, query_vector: List[float],  filters: List[dict] | None = None, must_not_filters: List[dict] | None = None , min_score: float|None = 0.8, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None) -> dict:
+    def search_embedding(self, index: str, query_vector: List[float],  filters: List[dict] | None = None, must_not_filters: List[dict] | None = None , min_score: float|None = 0.85, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None) -> dict:
         body = {
             "query": {
                 "bool": {
@@ -125,7 +125,6 @@ class ElasticsearchService:
             body["_source"] = source_fields
 
         res = self.client.search(index=index, body=body)
-
         return res
 
     # 🔹 Format result search, only array media_id

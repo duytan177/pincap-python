@@ -3,7 +3,7 @@ import time
 from App.Core.KafkaCore import kafka_core
 from App.Services.MediaIngestService import MediaIngestService
 import asyncio
-
+import os
 class KafkaConsumerService:
     """
     Kafka Consumer Service:
@@ -28,7 +28,12 @@ class KafkaConsumerService:
         self.poll_timeout = poll_timeout
 
         self.consumer = kafka_core.create_consumer(topic, group_id)
-        self.media_ingest_service = MediaIngestService("media_embeddings_test_v3")
+        index_name = os.getenv("ELASTIC_SEARCH_INDEX")
+
+        if not index_name:
+            raise ValueError("ELASTIC_SEARCH_INDEX environment variable must be set")
+
+        self.media_ingest_service = MediaIngestService(index_name)
 
     # -----------------------------------------
     # Handle a single event
