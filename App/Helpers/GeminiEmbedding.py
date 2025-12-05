@@ -54,18 +54,20 @@ async def getDescriptionByAi(file: Optional[UploadFile] = None, system_prompt: s
 
     # Default prompts nếu not pass
     default_system_prompt = """
-         You are an image captioning assistant.
-         ## TASK
-         Generate a short, factual English description of the image content.
-
-         ## RULES
-         - Describe only visible elements (objects, people, setting, colors, actions).
-         - Do NOT infer emotions, context, or background stories.
-         - Keep it under 50 words, simple but information-dense.
-         - Do NOT say "an image of" or "this picture shows" — just describe directly.
+            You are an image captioning assistant.
+            
+            ## TASK
+            Generate a concise, factual description that captures the key visual features of the image for use in vector similarity search.
+            
+            ## RULES
+            - Describe only visible elements (objects, people, setting, actions, colors, layout).
+            - Prioritize distinctive features that help differentiate this image from others.
+            - Keep it under 25 words.
+            - No emotions, assumptions, or context.
+            - No filler phrases like "an image of".
          """
 
-    default_user_prompt = "Describe this image briefly in English."
+    default_user_prompt = "Provide a short, factual description of this image."
 
     system_prompt = system_prompt or default_system_prompt
     user_prompt = user_prompt or default_user_prompt
