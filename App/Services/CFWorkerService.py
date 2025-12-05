@@ -168,25 +168,25 @@ class CFWorkerService:
             grid_base64 = self.merge_frames_grid(frames_base64, (grid_rows, grid_cols))
             system_prompt = """
             You are a video captioning assistant.
-            
+
             ## TASK
-            Given an image that is a collage of multiple frames from a video, generate a coherent English description of the video content. 
-            Treat the image as a representation of the video flow, and write the description as if you are watching the video in real time.
+            Given a single image that represents the visual flow of a video, generate a coherent English description of the video content. 
+            Write the description as if you are watching the video in real time.
             
             ## RULES
-            - Describe visible objects, people, actions, movements, and settings.
-            - Do NOT mention that the input is an image, collage, or frames.
-            - Do NOT invent emotions, background stories, or assumptions.
-            - Keep it concise, clear, and flowing like a short narration.
-            - Use complete sentences and natural language.
+            - Focus on visible actions, objects, people, movements, and settings.
+            - Do NOT mention or imply anything about images, frames, or collages.
+            - Do NOT invent emotions, motivations, or background stories.
+            - Use concise, natural, flowing narration in complete sentences.
+            - Prioritize what is visually consistent across the sequence.
             """
 
             user_prompt = """
-            Describe the video content naturally and coherently, as if you are watching it in real time. 
-Focus only on visible actions, objects, people, movements, and settings. 
-Do NOT mention frames, images, or that it is a collage. 
-Do NOT invent emotions, background stories, or assumptions. 
-Keep the description concise, flowing like a short narration in complete sentences.
+            Describe the video naturally and coherently, as if you are watching it unfold in real time. 
+            Focus only on visible objects, actions, people, movements, and settings. 
+            Do NOT mention images, frames, or collages. 
+            Do NOT add emotions or assumptions. 
+            Keep the narration concise and clear in complete sentences.
 """
             description = await getDescriptionByAi(grid_base64,system_prompt, user_prompt)
             return description
