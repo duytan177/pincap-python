@@ -128,7 +128,7 @@ class ElasticsearchService:
         return res
 
     # 🔹 Format result search, only array media_id
-    def format_media_ids(self, data_embedding: dict, from_: int|None = None, size: int|None = 20 ) -> dict:
+    def format_media_ids(self, data_embedding: dict, from_: int|None = None ) -> dict:
         """
         Chuyển kết quả Elasticsearch search thành list media_id
         """
@@ -140,7 +140,7 @@ class ElasticsearchService:
         })
         # Tổng số kết quả trong ES
         total_hits = data_embedding.get("hits", {}).get("total", {}).get("value", 0)
-
+        size = len(media_ids)
         # Kiểm tra còn dữ liệu để phân trang không
         has_more = (from_ + size) < total_hits
 
