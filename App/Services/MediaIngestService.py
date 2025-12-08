@@ -131,7 +131,7 @@ class MediaIngestService:
             try:
                 desc = await getDescriptionByAi(upload)
                 descriptions.append((idx, desc))
-                time.sleep(2)
+                await time.sleep(0.2)
             except Exception as e:
                 print(f"⚠️ AI description failed for image {upload.filename}: {e}", flush=True)
                 descriptions.append((idx, None))
@@ -272,13 +272,14 @@ class MediaIngestService:
             # Try to extract JSON from response (in case there's extra text)
             json_start = response_text.find("{")
             json_end = response_text.rfind("}") + 1
-            if json_start >= 0 and json_end > json_start:
+            if json_start != -1 and json_end > json_start:
                 json_str = response_text[json_start:json_end]
                 metadata = json.loads(json_str)
             else:
-                metadata = json.loads(response_text)
+                # If no JSON object is found, trigger the exception to use fallback
+                raise json.JSONDecodeError("No JSON object found in response", response_text, 0)
         except json.JSONDecodeError as e:
-            print(f"⚠️ Failed to parse JSON response: {response_text}", flush=True)
+            print(f"⚠️ Failed to parse JSON response: {response_text}. Error: {e}", flush=True)
             # Fallback: create basic metadata
             words = combined_description.split()
             metadata = {
