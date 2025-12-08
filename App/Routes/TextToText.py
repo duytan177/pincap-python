@@ -21,7 +21,7 @@ async def text_to_text(request: TextToTextRequest):
                               "responseModalities": ["TEXT"]
 
         }
-        model = "gemini-2.5-flash"
+        model = "gemini-2.5-flash-lite"
         geminiService = GeminiService(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", generationConfig)
         system_prompt = request.system_prompt
         user_prompt = request.user_prompt

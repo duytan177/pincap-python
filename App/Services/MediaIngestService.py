@@ -1,18 +1,29 @@
-import io
 import json
+import io
 import mimetypes
-from typing import List, Dict, Any, Optional
-import numpy as np
-
-import requests
 import asyncio
+import time
+from typing import List, Dict, Any, Optional, Tuple
+import numpy as np
+import os
+import requests
 from fastapi import UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
-import os
 
-from App.Services.CFWorkerService import CFWorkerService
 from App.Services.ElasticsearchService import ElasticsearchService
+from App.Services.CFWorkerService import CFWorkerService
+from App.Services.GeminiService import GeminiService
 from App.Helpers.GeminiEmbedding import getEmbedding, getDescriptionByAi
+
+# Media file extensions
+IMAGE_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+    ".heic", ".heif", ".svg", ".ico", ".jfif", ".pjpeg", ".pjp", ".avif"
+)
+
+VIDEO_EXTENSIONS = (
+    ".mp4", ".mov", ".wmv", ".avi", ".flv", ".mkv", ".webm", ".m4v"
+)
 
 
 class MediaIngestService:
@@ -45,13 +56,29 @@ class MediaIngestService:
         }
         self.es_service = ElasticsearchService(self.index_name, self.mapping)
 
-    def _download_as_uploadfile(self, url: str) -> Optional[UploadFile]:
+    # =============================
+    # REUSABLE STATIC METHODS
+    # =============================
+
+    @staticmethod
+    def normalize_media_urls(media_url: str | List[str] | None) -> List[str]:
+        """Normalize media_url to a list of strings"""
+        if not media_url:
+            return []
+        if isinstance(media_url, str):
+            return [media_url]
+        elif isinstance(media_url, list):
+            return [url for url in media_url if isinstance(url, str)]
+        return []
+
+    @staticmethod
+    def download_as_uploadfile(url: str) -> Optional[UploadFile]:
         """Download media URL and convert to UploadFile in memory"""
         try:
-            print(f"Get file {url}")
+            print(f"📥 Downloading media from URL: {url}", flush=True)
             resp = requests.get(url, timeout=15)
             if resp.status_code != 200:
-                print(f"⚠️ Failed to download media from URL: {url} ({resp.status_code})")
+                print(f"⚠️ Failed to download media from URL: {url} ({resp.status_code})", flush=True)
                 return None
             content = resp.content
             guessed_type, _ = mimetypes.guess_type(url)
@@ -60,19 +87,211 @@ class MediaIngestService:
             upload = StarletteUploadFile(filename=filename, file=file_obj)
             return upload
         except Exception as e:
-            print(f"❌ Error downloading URL {url}: {e}")
+            print(f"❌ Error downloading URL {url}: {e}", flush=True)
             return None
 
-    async def _download_all_uploadfiles(self, urls: List[str], max_concurrent=3) -> List[UploadFile]:
+    @staticmethod
+    async def download_all_uploadfiles(urls: List[str], max_concurrent: int = 3) -> List[UploadFile]:
+        """Download multiple URLs concurrently"""
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def sem_download(url):
             async with semaphore:
-                return await asyncio.to_thread(self._download_as_uploadfile, url)
+                return await asyncio.to_thread(MediaIngestService.download_as_uploadfile, url)
 
         tasks = [sem_download(url) for url in urls]
         results = await asyncio.gather(*tasks)
         return [r for r in results if r is not None]
+
+    @staticmethod
+    def categorize_media_urls(media_urls: List[str]) -> Tuple[List[Tuple[int, str]], List[Tuple[int, str]]]:
+        """
+        Categorize media URLs into images and videos.
+        Returns: (images, videos) where each is a list of (index, url) tuples
+        """
+        indexed_urls = [(i, url) for i, url in enumerate(media_urls) if isinstance(url, str)]
+        images = [(i, url) for i, url in indexed_urls if url.lower().endswith(IMAGE_EXTENSIONS)]
+        videos = [(i, url) for i, url in indexed_urls if url.lower().endswith(VIDEO_EXTENSIONS)]
+        return images, videos
+
+    @staticmethod
+    async def process_images(indexed_images: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str]]]:
+        """
+        Process images and generate descriptions.
+        Returns: List of (index, description) tuples
+        """
+        if not indexed_images:
+            return []
+
+        uploads = await MediaIngestService.download_all_uploadfiles(
+            [url for i, url in indexed_images]
+        )
+        descriptions = []
+        for idx, upload in zip([i for i, _ in indexed_images], uploads):
+            try:
+                desc = await getDescriptionByAi(upload)
+                descriptions.append((idx, desc))
+                time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ AI description failed for image {upload.filename}: {e}", flush=True)
+                descriptions.append((idx, None))
+        return descriptions
+
+    @staticmethod
+    async def process_videos(
+        indexed_videos: List[Tuple[int, str]],
+        worker_url: Optional[str] = None
+    ) -> List[Tuple[int, Optional[str]]]:
+        """
+        Process videos and generate descriptions.
+        Returns: List of (index, description) tuples
+        """
+        if not indexed_videos:
+            return []
+
+        descriptions = []
+        worker_url = worker_url or os.getenv("CLOUDFLARE_WORKER_PINCAP_DETECT_VIDEO", "")
+        detect_service = CFWorkerService(worker_url=worker_url)
+
+        for idx, url in indexed_videos:
+            try:
+                print(f"🎥 Processing video #{url}", flush=True)
+                description = await detect_service.extract_and_describe(url)
+                if isinstance(description, dict) and "error" in description:
+                    print(f"⚠️ Video processing error: {description['error']}", flush=True)
+                    descriptions.append((idx, None))
+                else:
+                    descriptions.append((idx, description))
+            except Exception as e:
+                print(f"⚠️ AI description failed for video {url}: {e}", flush=True)
+                descriptions.append((idx, None))
+        return descriptions
+
+    @staticmethod
+    async def process_media_urls(
+        media_urls: List[str],
+        worker_url: Optional[str] = None
+    ) -> str:
+        """
+        Process all media URLs (images and videos) in parallel and return combined description.
+        
+        Args:
+            media_urls: List of media URLs to process
+            worker_url: Optional Cloudflare worker URL for video processing
+            
+        Returns:
+            Combined description string from all media
+        """
+        # Categorize media
+        images, videos = MediaIngestService.categorize_media_urls(media_urls)
+
+        # Process in parallel
+        image_task = asyncio.create_task(
+            MediaIngestService.process_images(images)
+        )
+        video_task = asyncio.create_task(
+            MediaIngestService.process_videos(videos, worker_url)
+        )
+
+        image_results, video_results = await asyncio.gather(image_task, video_task)
+
+        # Merge and order by original media_urls
+        all_results = image_results + video_results
+        descriptions = [
+            desc for idx, desc in sorted(all_results, key=lambda x: x[0])
+            if desc is not None
+        ]
+
+        # Combine descriptions
+        combined_description = " | ".join(descriptions) if descriptions else ""
+        return combined_description
+
+    @staticmethod
+    async def generate_metadata_from_description(
+        combined_description: str,
+        gemini_service: GeminiService
+    ) -> Dict[str, Any]:
+        """
+        Generate title, description, and tags from combined media description using Gemini AI.
+        
+        Args:
+            combined_description: Combined description from all media
+            gemini_service: Initialized GeminiService instance
+            
+        Returns:
+            Dictionary with 'title', 'description', and 'tags' keys
+        """
+        if not combined_description:
+            raise ValueError("❌ Combined description cannot be empty")
+
+        # Generate title, description, and tags using Gemini
+        system_prompt = """
+        You are a content analysis assistant.
+        
+        ## TASK
+        Analyze the provided media description and generate:
+        1. A concise, engaging title (max 10 words)
+        2. A detailed description (2-3 sentences)
+        3. Relevant tags (max 10 keywords, comma-separated)
+        
+        ## OUTPUT FORMAT
+        Return ONLY a valid JSON object with this exact structure:
+        {
+            "title": "string",
+            "description": "string",
+            "tags": ["tag1", "tag2", "tag3"]
+        }
+        
+        ## RULES
+        - Title should be catchy and descriptive
+        - Description should be informative and detailed
+        - Tags should be relevant keywords (lowercase, no spaces in tags)
+        - Return ONLY the JSON, no additional text
+        """
+
+        user_prompt = f"""
+        Based on this media content description, generate a title, description, and tags:
+        
+        {combined_description}
+        
+        Return the JSON object as specified.
+        """
+
+        # Build prompt
+        prompt = gemini_service.buildPrompt(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            files=None
+        )
+        print(prompt, flush=True)
+        # Call Gemini API
+        response_text = await gemini_service.textToText(prompt)
+
+        # Parse JSON response
+        try:
+            # Try to extract JSON from response (in case there's extra text)
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                metadata = json.loads(json_str)
+            else:
+                metadata = json.loads(response_text)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Failed to parse JSON response: {response_text}", flush=True)
+            # Fallback: create basic metadata
+            words = combined_description.split()
+            metadata = {
+                "title": " ".join(words[:10]),
+                "description": combined_description[:200],
+                "tags": words[:5] if len(words) >= 5 else words
+            }
+
+        return metadata
+
+    # =============================
+    # INSTANCE METHODS
+    # =============================
 
     def _build_embedding_text(self, media_name: str, description: str, ai_description: str, tag_name: str) -> str:
         parts: List[str] = []
@@ -99,74 +318,15 @@ class MediaIngestService:
             user_id = event_obj.get("user_id")
             existing_doc = self.es_service.get_document_by_id(self.index_name, media_id)
             if existing_doc is None:
-                # Chuẩn hóa media_urls thành list
-                media_urls = event_obj.get("media_url")
-                if isinstance(media_urls, str):
-                    media_urls = [media_urls]
-                elif not isinstance(media_urls, list):
-                    media_urls = []
+                # Normalize media_urls to list using reusable method
+                media_url = event_obj.get("media_url")
+                media_urls = MediaIngestService.normalize_media_urls(media_url)
 
-                # ---------- PROCESS PARALLEL GET DESCRIPTION FOR IMAGE AND VIDEO---------------
-                # popular extensions
-                image_extensions = (
-                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
-                    ".heic", ".heif", ".svg", ".ico", ".jfif", ".pjpeg", ".pjp", ".avif"
-                )
-
-                video_extensions = (
-                    ".mp4", ".mov", ".wmv", ".avi", ".flv", ".mkv", ".webm", ".m4v"
-                )
-
-                # -------------------------------
-                # Save by original index
-                indexed_urls = [(i, url) for i, url in enumerate(media_urls) if isinstance(url, str)]
-                images = [(i, url) for i, url in indexed_urls if url.lower().endswith(image_extensions)]
-                videos = [(i, url) for i, url in indexed_urls if url.lower().endswith(video_extensions)]
-
-                # -------------------------------
-                # Image pipeline
-                async def process_images(indexed_list):
-                    uploads = await self._download_all_uploadfiles([url for i, url in indexed_list])
-                    descriptions = []
-                    for idx, upload in zip([i for i, _ in indexed_list], uploads):
-                        try:
-                            desc = await getDescriptionByAi(upload)
-                            descriptions.append((idx, desc))
-                        except Exception as e:
-                            print(f"⚠️ AI description failed for image {upload.filename}: {e}", flush=True)
-                            descriptions.append((idx, None))
-                    return descriptions
-
-                # -------------------------------
-                # Video pipeline
-                async def process_videos(indexed_list):
-                    descriptions = []
-                    detect_service = CFWorkerService(
-                        worker_url=os.getenv("CLOUDFLARE_WORKER_PINCAP_DETECT_VIDEO")
-                    )
-                    for idx, url in indexed_list:
-                        try:
-                            print(f"video #{url}", flush=True)
-                            description = await detect_service.extract_and_describe(url)
-                            print(description)
-                            descriptions.append((idx, description))
-                        except Exception as e:
-                            print(f"⚠️ AI description failed for video {url}: {e}", flush=True)
-                            descriptions.append((idx, None))
-                    return descriptions
-
-                # -------------------------------
-                # Run parallel
-                image_task = asyncio.create_task(process_images(images))
-                video_task = asyncio.create_task(process_videos(videos))
-
-                image_results, video_results = await asyncio.gather(image_task, video_task)
-                # -------------------------------
-                # Merge and order by original media_urls
-                all_results = image_results + video_results
-                ai_descriptions = [desc for idx, desc in sorted(all_results, key=lambda x: x[0])]
-
-                ai_description = " | ".join(ai_descriptions) if ai_descriptions else ""
+                # Process media URLs using reusable method
+                if media_urls:
+                    ai_description = await MediaIngestService.process_media_urls(media_urls)
+                else:
+                    ai_description = ""
             else:
                 ai_description = existing_doc.get("ai_description")
             # Text metadata
