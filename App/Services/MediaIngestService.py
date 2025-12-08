@@ -263,7 +263,7 @@ class MediaIngestService:
             user_prompt=user_prompt,
             files=None
         )
-        print(prompt, flush=True)
+
         # Call Gemini API
         response_text = await gemini_service.textToText(prompt)
 
