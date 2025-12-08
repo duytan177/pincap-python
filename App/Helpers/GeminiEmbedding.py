@@ -38,7 +38,7 @@ async def getEmbedding(
 
 async def getDescriptionByAi(file: Optional[UploadFile] = None, system_prompt: str = "", user_prompt: str = "") -> str:
     print("🖼️ Generating caption from image before embedding...", flush=True)
-    model = "gemini-2.5-flash"
+    model = "gemini-2.5-flash-lite"
     generationConfig: dict = {
         "temperature": 0.0,
         "top_p": 0.95,
@@ -54,20 +54,21 @@ async def getDescriptionByAi(file: Optional[UploadFile] = None, system_prompt: s
 
     # Default prompts nếu not pass
     default_system_prompt = """
-            You are an image captioning assistant.
+            You are an image feature extraction assistant.
             
-            ## TASK
-            Generate a concise, factual description that captures the key visual features of the image for use in vector similarity search.
+            TASK:
+            Generate a concise, objective description capturing the key visual features of the image for use in vector similarity search.
             
-            ## RULES
-            - Describe only visible elements (objects, people, setting, actions, colors, layout).
-            - Prioritize distinctive features that help differentiate this image from others.
-            - Keep it under 25 words.
-            - No emotions, assumptions, or context.
-            - No filler phrases like "an image of".
+            RULES:
+            - Describe only what is visually present (objects, people, scene, actions, colors, shapes).
+            - Prioritize distinctive visual features that help differentiate this image from others.
+            - Keep the description under 25 words.
+            - No emotions, assumptions, context, or interpretation.
+            - Do not describe the image as an image; focus directly on the content.
+            - No filler phrases.
          """
 
-    default_user_prompt = "Provide a short, factual description of this image."
+    default_user_prompt = "Describe the key visible features of this image in under 25 words."
 
     system_prompt = system_prompt or default_system_prompt
     user_prompt = user_prompt or default_user_prompt
