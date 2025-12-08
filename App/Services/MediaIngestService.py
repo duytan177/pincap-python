@@ -131,7 +131,7 @@ class MediaIngestService:
             try:
                 desc = await getDescriptionByAi(upload)
                 descriptions.append((idx, desc))
-                await time.sleep(0.2)
+                await asyncio.sleep(0.2)
             except Exception as e:
                 print(f"⚠️ AI description failed for image {upload.filename}: {e}", flush=True)
                 descriptions.append((idx, None))
