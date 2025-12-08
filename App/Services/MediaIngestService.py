@@ -348,8 +348,8 @@ class MediaIngestService:
             tasks.append(getEmbedding(text=ai_description))
 
             # text embedding (only run if text_content != "")
-            if text_content:
-                tasks.append(getEmbedding(text=text_content))
+            # if text_content:
+            #     tasks.append(getEmbedding(text=text_content))
             # =============================
             #   Run tasks parallel
             # =============================
