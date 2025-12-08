@@ -263,7 +263,7 @@ class MediaIngestService:
         except Exception as e:
             print(f"❌ Insert error: {e}", flush=True)
 
-def fuse_embeddings(img_emb, text_emb, w_img=0.7, w_text=0.3):
+def fuse_embeddings(img_emb, text_emb, w_img=0.5, w_text=0.5):
     """
     Fuse 2 embeddings an toàn, hỗ trợ text_emb = None.
     Nếu text_emb = None → trả về img_emb (L2 normalized).
