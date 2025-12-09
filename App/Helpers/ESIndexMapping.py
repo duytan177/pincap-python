@@ -2,6 +2,9 @@
 import os
 
 index_name = os.getenv("ELASTIC_SEARCH_INDEX")
+if not index_name:
+    raise RuntimeError("ELASTIC_SEARCH_INDEX environment variable is not set or empty.")
+
 mapping = {
     "mappings": {
         "properties": {
