@@ -2,14 +2,13 @@ import json
 import io
 import mimetypes
 import asyncio
-import time
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import os
 import requests
 from fastapi import UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
-
+from App.Helpers.ESIndexMapping import  mapping
 from App.Services.ElasticsearchService import ElasticsearchService
 from App.Services.CFWorkerService import CFWorkerService
 from App.Services.GeminiService import GeminiService
@@ -34,26 +33,7 @@ class MediaIngestService:
 
     def __init__(self, index_name: str = "media_embeddings_test_v3"):
         self.index_name = index_name
-        self.mapping = {
-            "mappings": {
-                "properties": {
-                    "media_id": {"type": "keyword"},
-                    "name": {"type": "text"},
-                    "description": {"type": "text"},
-                    "ai_description": {"type": "text"},
-                    "tags": {"type": "keyword"},
-                    "is_deleted": {"type": "boolean"},
-                    "user_id": {"type": "keyword"},
-                    "embedding": {
-                        "type": "dense_vector",
-                        "dims": 768,
-                        "index": True,
-                        "similarity": "cosine",
-                    },
-                    "media_url": {"type": "keyword"},
-                }
-            }
-        }
+        self.mapping = mapping
         self.es_service = ElasticsearchService(self.index_name, self.mapping)
 
     # =============================
@@ -263,7 +243,7 @@ class MediaIngestService:
             user_prompt=user_prompt,
             files=None
         )
-        print(prompt, flush=True)
+
         # Call Gemini API
         response_text = await gemini_service.textToText(prompt)
 
