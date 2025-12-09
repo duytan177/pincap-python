@@ -102,7 +102,7 @@ class GeminiService:
     # -----------------------------
     # 📦 CALL GEMINI EMBEDDING API
     # -----------------------------
-    async def call_gemini_api_embedding(self, text: str, dimension: int = 768) -> List[float]:
+    async def call_gemini_api_embedding(self, text: str, dimension: int = 1536) -> List[float]:
         """
         Gọi Gemini Embedding API để sinh vector từ text.
         Dùng base_url truyền sẵn ở constructor.
