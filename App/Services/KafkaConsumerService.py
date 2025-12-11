@@ -1,6 +1,7 @@
 import json
 import time
 from App.Core.KafkaCore import kafka_core
+from App.Helpers.ESIndexMapping import mapping, index_name, user_embedding_mapping, index_user
 from App.Services.MediaIngestService import MediaIngestService
 import asyncio
 import os
@@ -28,19 +29,15 @@ class KafkaConsumerService:
         self.poll_timeout = poll_timeout
 
         self.consumer = kafka_core.create_consumer(topic, group_id)
-        index_name = os.getenv("ELASTIC_SEARCH_INDEX")
 
-        if not index_name:
-            raise ValueError("ELASTIC_SEARCH_INDEX environment variable must be set")
-
-        self.media_ingest_service = MediaIngestService(index_name)
 
     # -----------------------------------------
     # Handle a single event
     # -----------------------------------------
     async def handle_event(self, event: dict):
         print(f"📌 [Kafka Event] {event}", flush=True)
-        await self.media_ingest_service.process_event(event=event)
+        media_ingest_service = MediaIngestService(index_name, mapping)
+        await media_ingest_service.process_event(event=event)
         print("finished process event", flush=True)
 
     # -----------------------------------------
@@ -48,8 +45,8 @@ class KafkaConsumerService:
     # -----------------------------------------
     async def handle_batch(self, events: list):
         print(f"📌 [Kafka Batch] {len(events)} events: {events}", flush=True)
-        # mediaIngest = MediaIngestService("media_embeddings_test_v3")
-        # mediaIngest.process_batch(events=events)
+        mediaIngest = MediaIngestService(index_user, user_embedding_mapping)
+        await mediaIngest.process_batch(events=events)
 
     # -----------------------------------------
     # Main loop

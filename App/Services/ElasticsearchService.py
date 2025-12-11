@@ -43,6 +43,40 @@ class ElasticsearchService:
             print(f"❌ Failed to get document {id}: {e}", flush=True)
             return None
 
+    def mget(self, index: str, ids: list):
+        """
+        Get multiple documents by IDs.
+        Returns a dict:
+            { id: _source or None }
+
+        Example:
+            {
+                "123": { ... },     # found
+                "456": None         # not found
+            }
+        """
+        if not ids:
+            return {}
+
+        try:
+            body = {"ids": ids}
+            resp = self.client.mget(index=index, body=body)
+
+            result = {}
+
+            for doc in resp.get("docs", []):
+                doc_id = doc.get("_id")
+                if doc.get("found"):
+                    result[doc_id] = doc.get("_source")
+                else:
+                    result[doc_id] = None
+
+            return result
+
+        except Exception as e:
+            print(f"❌ ES mget error: {e}", flush=True)
+            return {}
+
     # 🔹 Upsert 1 doc (insert if not exists, update if exists)
     def upsert_document(self, index: str, id: str, document: Dict[str, Any]):
         """
@@ -64,36 +98,9 @@ class ElasticsearchService:
             print(f"❌ Failed to upsert document: {e}", flush=True)
             raise e
 
-    # 🔹 Insert theo batch (chunk)
-    def insert_bulk_documents(self, index: str, documents: List[Dict[str, Any]], chunk_size: int = 500):
-        """
-        ✅ Insert nhiều documents vào Elasticsearch theo từng chunk.
-        Không kiểm tra index tồn tại. Bỏ qua field None.
-        """
-        try:
-            total = len(documents)
-            print(f"📦 Start bulk insert {total} documents into '{index}' ...")
-
-            for i in range(0, total, chunk_size):
-                chunk = documents[i:i + chunk_size]
-                actions = [
-                    {
-                        "_index": index,
-                        "_id": doc.get("media_id"),
-                        "_source": {k: v for k, v in doc.items() if v is not None}
-                    }
-                    for doc in chunk
-                ]
-
-                success, _ = bulk(self.client, actions)
-                print(f"✅ Inserted chunk {i // chunk_size + 1}: {len(chunk)} docs")
-
-            print(f"🎯 Bulk insert completed for index '{index}'")
-
-        except Exception as e:
-            print(f"❌ Bulk insert failed: {e}")
-            raise e
-
+    def bulk_insert(self, docs: List[dict]):
+        from elasticsearch.helpers import bulk
+        bulk(self.client, docs)
     # 🔹 Tìm kiếm vector
     def search_embedding(self, index: str, query_vector: List[float],  filters: List[dict] | None = None, must_not_filters: List[dict] | None = None , min_score: float|None = None, from_: int|None = None, size: int|None = 20, source_fields: list[str] | None = None) -> dict:
         body = {

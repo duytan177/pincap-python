@@ -2,13 +2,14 @@ import json
 import io
 import mimetypes
 import asyncio
+from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import os
 import requests
 from fastapi import UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
-from App.Helpers.ESIndexMapping import  mapping
+from App.Helpers.ESIndexMapping import mapping, index_user, index_name, WEIGHTS_FOR_USER_EMBEDDING
 from App.Services.ElasticsearchService import ElasticsearchService
 from App.Services.CFWorkerService import CFWorkerService
 from App.Services.GeminiService import GeminiService
@@ -31,9 +32,9 @@ class MediaIngestService:
     generate embedding from provided fields (excluding media_url), and bulk index into Elasticsearch.
     """
 
-    def __init__(self, index_name: str = "media_embeddings_test_v3"):
+    def __init__(self, index_name: str = "media_embeddings_test_v3", mapping_: Dict[str, Any] = mapping):
         self.index_name = index_name
-        self.mapping = mapping
+        self.mapping = mapping_
         self.es_service = ElasticsearchService(self.index_name, self.mapping)
 
     # =============================
@@ -364,29 +365,105 @@ class MediaIngestService:
             print(f"❌ Failed to transform event to document: {e}", flush=True)
             return None
 
-    # def process_batch(self, events: List[str], chunk_size: int = 200):
-    #     """Parse JSON strings, enrich, and bulk insert into Elasticsearch"""
-    #     docs: List[Dict[str, Any]] = []
-    #     for raw in events:
-    #         try:
-    #             print(f"row json event: {raw}")
-    #             obj = json.loads(raw)
-    #         except Exception:
-    #             print(f"⚠️ Skip invalid JSON: {raw[:128]}...")
-    #             continue
-    #
-    #         # doc = self._transform_event_to_doc(obj)
-    #         # if doc:
-    #         #     docs.append(doc)
-    #
-    #     if not docs:
-    #         print("ℹ️ No valid async_medias docs to insert in this batch")
-    #         return
-    #     #
-    #     # try:
-    #     #     self.es_service.insert_bulk_documents(self.index_name, docs, chunk_size=chunk_size)
-    #     # except Exception as e:
-    #     #     print(f"❌ Bulk insert error: {e}")
+    async def process_batch(self, events: List[dict], chunk_size: int = 200):
+        """
+        Process batch user behavior events:
+        - Compute weighted vector from media embedding
+        - Aggregate into user embedding
+        - Save into ES
+        """
+        print(f"🔥 Processing batch: {len(events)} events")
+
+        # ------------------------
+        # Trọng số behavior
+        # ------------------------
+
+        media_ids = list({ev.get("media_id") for ev in events if ev.get("media_id")})
+        user_ids = list({ev.get("user_id") for ev in events if ev.get("user_id")})
+
+        # MGET
+        media_map = self.es_service.mget(index_name, media_ids)
+        user_map = self.es_service.mget(index_user, user_ids)
+
+        # Create user_vectors preset
+        user_vectors = {}
+
+        # Extract events one by one
+        for ev in events:
+            try:
+                user_id = ev.get("user_id")
+                media_id = ev.get("media_id")
+                event_type = ev.get("event_type")  # view/like/comment/save/search
+                # metadata = ev.get("metadata")
+                weight = WEIGHTS_FOR_USER_EMBEDDING.get(event_type, 0.1)
+
+                if not user_id or not media_id:
+                    print(f"⚠️ Skip invalid event: {ev}")
+                    continue
+
+                # -----------------------------------------
+                # Media embedding
+                # -----------------------------------------
+                media_doc = media_map.get(media_id)
+                if not media_doc:
+                    print(f"⚠️ Media not found in ES: {media_id}", flush=True)
+                    continue
+
+                media_embedding = media_doc.get("embedding")
+                if not media_embedding:
+                    print(f"⚠️ Media has no embedding: {media_id}", flush=True)
+                    continue
+
+                # -----------------------------------------
+                # 2. Weighted vector = media embedding * weight
+                # -----------------------------------------
+                media_vector = np.array(media_embedding, dtype=float)
+                weighted_vec = media_vector * weight
+
+                # -----------------------------------------
+                #  Get user embedding from Elasticsearch
+                # -----------------------------------------
+                doc_user = user_map.get(user_id)
+                user_vectors[user_id] = doc_user.get("embedding", None)
+                # -----------------------------------------
+                # 3. Aggregate into user vector
+                # -----------------------------------------
+                # Init if user vector still None
+                if user_vectors[user_id] is None:
+                    user_vectors[user_id] = weighted_vec
+                else:
+                    user_vectors[user_id] += weighted_vec
+
+            except Exception as e:
+                print(f"❌ Error processing event : {e}")
+
+        # --------------------------------------------------------------
+        # Save aggregated user embedding vào Elasticsearch
+        # --------------------------------------------------------------
+        bulk_docs = []
+        for user_id, vec in user_vectors.items():
+            # Normalize vector tránh bias
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+
+            user_doc = {
+                "user_id": user_id,
+                "embedding": vec.tolist(),
+                "updated_at": datetime.utcnow().isoformat()
+            }
+
+            bulk_docs.append({
+                "_index": index_user,
+                "_id": user_id,
+                "_source": user_doc
+            })
+
+        if bulk_docs:
+            print(f"💾 Saving {len(bulk_docs)} user embeddings...", flush=True)
+            self.es_service.bulk_insert(bulk_docs)
+
+        print("🎉 Batch processing finished!", flush=True)
 
     async def process_event(self, event: dict):
         """Process a single event"""
