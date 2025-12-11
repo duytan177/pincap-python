@@ -27,6 +27,8 @@ mapping = {
 }
 
 index_user = os.getenv("USER_EMBEDDING_INDEX")
+if not index_user:
+    raise RuntimeError("USER_EMBEDDING_INDEX environment variable is not set or empty.")
 
 user_embedding_mapping = {
     "mappings": {
