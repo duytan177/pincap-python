@@ -49,3 +49,26 @@ services:
       KAFKA_PORT: ${KAFKA_PORT:-9092}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     restart: unless-stopped
+  worker-event:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pincap-worker2
+    command: python App/Workers/workerEvent.py
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-root}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-root}
+      MYSQL_DB: ${MYSQL_DB:-pincap}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secret_redis}
+      REDIS_DB: ${REDIS_DB:-0}
+      IP_SERVICE: ${IP_SERVICE:-127.0.0.1}
+      KAFKA_PORT: ${KAFKA_PORT:-9092}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    restart: unless-stopped
