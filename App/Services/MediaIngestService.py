@@ -366,97 +366,118 @@ class MediaIngestService:
             return None
 
     async def process_batch(self, events: List[dict], chunk_size: int = 200):
-        """
-        Process batch user behavior events:
-        - Compute weighted vector from media embedding
-        - Aggregate into user embedding
-        - Save into ES
-        """
         print(f"🔥 Processing batch: {len(events)} events")
 
-        # ------------------------
-        # Trọng số behavior
-        # ------------------------
+        # --------------------------------------------------
+        # 1. Collect ALL media_ids & user_ids
+        # --------------------------------------------------
+        media_ids = set()
+        user_ids = set()
 
-        media_ids = list({ev.get("media_id") for ev in events if ev.get("media_id")})
-        user_ids = list({ev.get("user_id") for ev in events if ev.get("user_id")})
+        for ev in events:
+            if ev.get("user_id"):
+                user_ids.add(ev["user_id"])
 
-        # MGET
+            if ev.get("media_id"):
+                media_ids.add(ev["media_id"])
+
+
+            metadata = ev.get("metadata") or {}
+            meta_media_ids = metadata.get("media_ids") or []
+            for mid in meta_media_ids:
+                media_ids.add(mid)
+
+        media_ids = list(media_ids)
+        user_ids = list(user_ids)
+
+        # --------------------------------------------------
+        # 2. MGET from Elasticsearch
+        # --------------------------------------------------
         media_map = self.es_service.mget(index_name, media_ids)
         user_map = self.es_service.mget(index_user, user_ids)
 
-        # Create user_vectors preset
         user_vectors = {}
 
-        # Extract events one by one
+        # --------------------------------------------------
+        # 3. Process each event
+        # --------------------------------------------------
         for ev in events:
             try:
                 user_id = ev.get("user_id")
-                media_id = ev.get("media_id")
-                event_type = ev.get("event_type")  # view/like/comment/save/search
-                # metadata = ev.get("metadata")
+                event_type = ev.get("event_type")
                 weight = WEIGHTS_FOR_USER_EMBEDDING.get(event_type, 0.1)
 
-                if not user_id or not media_id:
+                if not user_id:
                     print(f"⚠️ Skip invalid event: {ev}")
                     continue
 
-                # -----------------------------------------
-                # Media embedding
-                # -----------------------------------------
-                media_doc = media_map.get(media_id)
-                if not media_doc:
-                    print(f"⚠️ Media not found in ES: {media_id}", flush=True)
-                    continue
+                # Init user vector from ES (once)
+                if user_id not in user_vectors:
+                    user_doc = user_map.get(user_id)
+                    user_vectors[user_id] = (
+                        np.array(user_doc["embedding"], dtype=float)
+                        if user_doc and user_doc.get("embedding")
+                        else None
+                    )
 
-                media_embedding = media_doc.get("embedding")
-                if not media_embedding:
-                    print(f"⚠️ Media has no embedding: {media_id}", flush=True)
-                    continue
+                # -----------------------------
+                # Collect media_ids per event
+                # -----------------------------
+                event_media_ids = []
 
-                # -----------------------------------------
-                # 2. Weighted vector = media embedding * weight
-                # -----------------------------------------
-                media_vector = np.array(media_embedding, dtype=float)
-                weighted_vec = media_vector * weight
+                if ev.get("media_id"):
+                    event_media_ids.append(ev["media_id"])
 
-                # -----------------------------------------
-                #  Get user embedding from Elasticsearch
-                # -----------------------------------------
-                doc_user = user_map.get(user_id)
-                user_vectors[user_id] = doc_user.get("embedding", None)
-                # -----------------------------------------
-                # 3. Aggregate into user vector
-                # -----------------------------------------
-                # Init if user vector still None
-                if user_vectors[user_id] is None:
-                    user_vectors[user_id] = weighted_vec
-                else:
-                    user_vectors[user_id] += weighted_vec
+                metadata = ev.get("metadata") or {}
+                event_media_ids.extend(metadata.get("media_ids", []))
+
+                # -----------------------------
+                # Aggregate embeddings
+                # -----------------------------
+                for media_id in event_media_ids:
+
+                    media_doc = media_map.get(media_id)
+                    if not media_doc:
+                        print(f"⚠️ Media not found in ES: {media_id}", flush=True)
+                        continue
+
+                    embedding = media_doc.get("embedding")
+                    if not embedding:
+                        print(f"⚠️ Media has no embedding: {media_id}", flush=True)
+                        continue
+
+                    media_vec = np.array(embedding, dtype=float)
+                    weighted_vec = media_vec * weight
+
+                    if user_vectors[user_id] is None:
+                        user_vectors[user_id] = weighted_vec
+                    else:
+                        user_vectors[user_id] += weighted_vec
 
             except Exception as e:
-                print(f"❌ Error processing event : {e}")
+                print(f"❌ Error processing event {ev}: {e}", flush=True)
 
-        # --------------------------------------------------------------
-        # Save aggregated user embedding vào Elasticsearch
-        # --------------------------------------------------------------
+        # --------------------------------------------------
+        # 4. Normalize & Save user embeddings
+        # --------------------------------------------------
         bulk_docs = []
+
         for user_id, vec in user_vectors.items():
-            # Normalize vector tránh bias
+            if vec is None:
+                continue
+
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec = vec / norm
 
-            user_doc = {
-                "user_id": user_id,
-                "embedding": vec.tolist(),
-                "updated_at": datetime.utcnow().isoformat()
-            }
-
             bulk_docs.append({
                 "_index": index_user,
                 "_id": user_id,
-                "_source": user_doc
+                "_source": {
+                    "user_id": user_id,
+                    "embedding": vec.tolist(),
+                    "updated_at": datetime.utcnow().isoformat()
+                }
             })
 
         if bulk_docs:
