@@ -6,18 +6,34 @@ from dotenv import load_dotenv
 from typing import List, Dict, Optional, Any
 
 from fastapi import UploadFile
+from App.Helpers.APIKeyManager import get_gemini_key_manager
 
 load_dotenv()
 
 class GeminiService:
-    def __init__(self, model: str, generationConfig: dict|None = None):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment")
+    def __init__(self, model: str, generationConfig: dict|None = None, use_key_rotation: bool = True):
+        """
+        Khởi tạo GeminiService.
+        
+        Args:
+            model: URL của model Gemini
+            generationConfig: Config cho generation
+            use_key_rotation: Có sử dụng key rotation khi gặp 429 không (mặc định: True)
+        """
+        self.key_manager = get_gemini_key_manager() if use_key_rotation else None
+        
+        if self.key_manager:
+            self.api_key = self.key_manager.get_current_key()
+        else:
+            # Fallback về cách cũ nếu không dùng rotation
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY not found in environment")
+            self.api_key = api_key
 
-        self.api_key = api_key
         self.base_url = model
         self.model = model
+        self.use_key_rotation = use_key_rotation
 
         # Default config
         self.generationConfig = generationConfig or {
@@ -83,55 +99,153 @@ class GeminiService:
     # INTERNAL HELPERS
     # -----------------------------
 
-    async  def _call_gemini_api(self, payload: dict) -> dict:
-        """Generic request caller for Gemini API"""
-        headers = {
+    async  def _call_gemini_api(self, payload: dict, max_retries: int = 5) -> dict:
+        """
+        Generic request caller for Gemini API với tự động retry khi gặp 429.
+        
+        Args:
+            payload: Payload để gửi đến API
+            max_retries: Số lần retry tối đa (mặc định: 5)
+        """
+        last_error = None
+        
+        for attempt in range(max_retries):
+            # Lấy API key hiện tại (có thể đã được rotate)
+            if self.use_key_rotation and self.key_manager:
+                current_key = self.key_manager.get_current_key()
+            else:
+                current_key = self.api_key
+            
+            headers = {
                 "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key
-                }
-        response = requests.post(
-            f"{self.base_url}?key={self.api_key}",
-            headers=headers,
-            data=json.dumps(payload),
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"Gemini API error {response.status_code}: {response.text}")
-
-        return response.json()
+                "x-goog-api-key": current_key
+            }
+            
+            try:
+                response = requests.post(
+                    f"{self.base_url}?key={current_key}",
+                    headers=headers,
+                    data=json.dumps(payload),
+                )
+                
+                # Nếu thành công
+                if response.status_code == 200:
+                    return response.json()
+                
+                # Nếu gặp lỗi 429 (rate limit) và có key rotation
+                if response.status_code == 429 and self.use_key_rotation and self.key_manager:
+                    print(f"⚠️ API key bị rate limit (429) ở lần thử {attempt + 1}/{max_retries}", flush=True)
+                    
+                    # Đánh dấu key hiện tại bị failed
+                    self.key_manager.mark_key_failed(current_key)
+                    
+                    # Kiểm tra xem còn key nào không
+                    if self.key_manager.get_available_count() == 0:
+                        # Nếu hết key, reset và thử lại
+                        print("🔄 Tất cả keys đều bị rate limit, reset và thử lại...", flush=True)
+                        self.key_manager.reset_failed_keys()
+                    
+                    # Rotate sang key tiếp theo (nếu còn key)
+                    if attempt < max_retries - 1:  # Chỉ rotate nếu còn lần retry
+                        new_key = self.key_manager.rotate_to_next_key()
+                        self.api_key = new_key
+                        last_error = f"Rate limit (429) - đã chuyển sang key khác"
+                        continue
+                    else:
+                        last_error = f"Rate limit (429) - đã thử hết {max_retries} lần"
+                
+                # Các lỗi khác
+                last_error = f"Gemini API error {response.status_code}: {response.text}"
+                if response.status_code != 429:  # Không retry cho các lỗi khác 429
+                    raise RuntimeError(last_error)
+                    
+            except requests.exceptions.RequestException as e:
+                last_error = f"Request error: {str(e)}"
+                if attempt < max_retries - 1:
+                    continue
+                raise RuntimeError(last_error)
+        
+        # Nếu đã hết số lần retry
+        raise RuntimeError(f"Đã thử {max_retries} lần nhưng vẫn gặp lỗi. Lỗi cuối: {last_error}")
 
     # -----------------------------
     # 📦 CALL GEMINI EMBEDDING API
     # -----------------------------
-    async def call_gemini_api_embedding(self, text: str, dimension: int = 1536) -> List[float]:
+    async def call_gemini_api_embedding(self, text: str, dimension: int = 1536, max_retries: int = 5) -> List[float]:
         """
         Gọi Gemini Embedding API để sinh vector từ text.
         Dùng base_url truyền sẵn ở constructor.
+        Hỗ trợ tự động retry với key rotation khi gặp 429.
         """
         if not text or not text.strip():
             raise ValueError("❌ Input text for embedding cannot be empty.")
 
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key
-        }
+        last_error = None
+        
+        for attempt in range(max_retries):
+            # Lấy API key hiện tại (có thể đã được rotate)
+            if self.use_key_rotation and self.key_manager:
+                current_key = self.key_manager.get_current_key()
+            else:
+                current_key = self.api_key
 
-        payload = {
-            "model": "models/gemini-embedding-001",
-            "content": {"parts": [{"text": text}]},
-            "output_dimensionality": dimension
-        }
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": current_key
+            }
 
-        response = requests.post(self.base_url, headers=headers, json=payload)
+            payload = {
+                "model": "models/gemini-embedding-001",
+                "content": {"parts": [{"text": text}]},
+                "output_dimensionality": dimension
+            }
 
-        if response.status_code != 200:
-            raise RuntimeError(f"[GeminiEmbeddingError] HTTP {response.status_code}: {response.text}")
+            try:
+                response = requests.post(self.base_url, headers=headers, json=payload)
 
-        data = response.json()
-        embedding = data.get("embedding", {}).get("values")
-        if not embedding:
-            raise ValueError(f"⚠️ No embedding found in response: {json.dumps(data, indent=2)}")
+                # Nếu thành công
+                if response.status_code == 200:
+                    data = response.json()
+                    embedding = data.get("embedding", {}).get("values")
+                    if not embedding:
+                        raise ValueError(f"⚠️ No embedding found in response: {json.dumps(data, indent=2)}")
+                    return embedding
 
-        return embedding
+                # Nếu gặp lỗi 429 (rate limit) và có key rotation
+                if response.status_code == 429 and self.use_key_rotation and self.key_manager:
+                    print(f"⚠️ API key bị rate limit (429) ở embedding API - lần thử {attempt + 1}/{max_retries}", flush=True)
+                    
+                    # Đánh dấu key hiện tại bị failed
+                    self.key_manager.mark_key_failed(current_key)
+                    
+                    # Kiểm tra xem còn key nào không
+                    if self.key_manager.get_available_count() == 0:
+                        # Nếu hết key, reset và thử lại
+                        print("🔄 Tất cả keys đều bị rate limit, reset và thử lại...", flush=True)
+                        self.key_manager.reset_failed_keys()
+                    
+                    # Rotate sang key tiếp theo (nếu còn lần retry)
+                    if attempt < max_retries - 1:
+                        new_key = self.key_manager.rotate_to_next_key()
+                        self.api_key = new_key
+                        last_error = f"Rate limit (429) - đã chuyển sang key khác"
+                        continue
+                    else:
+                        last_error = f"Rate limit (429) - đã thử hết {max_retries} lần"
+
+                # Các lỗi khác
+                last_error = f"[GeminiEmbeddingError] HTTP {response.status_code}: {response.text}"
+                if response.status_code != 429:  # Không retry cho các lỗi khác 429
+                    raise RuntimeError(last_error)
+                    
+            except requests.exceptions.RequestException as e:
+                last_error = f"Request error: {str(e)}"
+                if attempt < max_retries - 1:
+                    continue
+                raise RuntimeError(last_error)
+
+        # Nếu đã hết số lần retry
+        raise RuntimeError(f"Đã thử {max_retries} lần nhưng vẫn gặp lỗi. Lỗi cuối: {last_error}")
 
     def _format_response(self, data: dict, mode: str = "text") -> Any:
         """Extract response data (text or image)"""

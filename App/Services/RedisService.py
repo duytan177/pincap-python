@@ -59,7 +59,7 @@ class RedisService:
     # -----------------------------
     # 🔹 Get or generate Gemini embedding
     # -----------------------------
-    async def get_or_create_embedding(self, user_id: str, file):
+    async def get_or_create_embedding(self, user_id: str, file=None, text: str = None):
         """
         Tự động lấy embedding từ cache nếu có,
         nếu chưa có thì đọc file, tạo embedding mới bằng embedding_fn, lưu lại, rồi trả về.
@@ -79,7 +79,15 @@ class RedisService:
 
         try:
             file.file.seek(0)
-            embedding = await getEmbedding(file=file)
+            # Tạo embedding mới nếu không có trong cache
+            embedding = None
+            if file:
+                # Nếu là file, tạo embedding từ file
+                embedding = await getEmbedding(file=file)
+            elif text:
+                # Nếu là text, tạo embedding từ text
+                embedding = await getEmbedding(text=text)
+
             await self.save(user_id, content, embedding)
             return embedding
         except Exception as e:
