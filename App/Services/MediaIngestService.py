@@ -32,7 +32,7 @@ class MediaIngestService:
     generate embedding from provided fields (excluding media_url), and bulk index into Elasticsearch.
     """
 
-    def __init__(self, index_name: str = "media_embeddings_test_v3", mapping_: Dict[str, Any] = mapping):
+    def __init__(self, index_name: str = "media_embeddings", mapping_: Dict[str, Any] = mapping):
         self.index_name = index_name
         self.mapping = mapping_
         self.es_service = ElasticsearchService(self.index_name, self.mapping)
@@ -268,6 +268,112 @@ class MediaIngestService:
                 "description": combined_description[:200],
                 "tags": words[:5] if len(words) >= 5 else words
             }
+
+        return metadata
+
+    @staticmethod
+    async def generate_metadata_with_strict_constraints(
+        combined_description: str,
+        gemini_service: GeminiService
+    ) -> Dict[str, Any]:
+        """
+        Generate title, description, and tags from combined media description with strict constraints.
+        - Title: max 10 characters
+        - Description: max 30 characters
+        - Tags: max 10 tags as array
+        
+        Args:
+            combined_description: Combined description from all media
+            gemini_service: Initialized GeminiService instance
+            
+        Returns:
+            Dictionary with 'title', 'description', and 'tags' keys
+        """
+        if not combined_description:
+            raise ValueError("❌ Combined description cannot be empty")
+
+        # Generate title, description, and tags using Gemini with strict constraints
+        system_prompt = """
+        You are a content analysis assistant.
+        
+        ## TASK
+        Analyze the provided media description and generate:
+        1. A concise title (MAXIMUM 10 CHARACTERS - count carefully!)
+        2. A brief description (MAXIMUM 30 CHARACTERS - count carefully!)
+        3. Relevant tags as an array (MAXIMUM 10 tags)
+        
+        ## OUTPUT FORMAT
+        Return ONLY a valid JSON object with this exact structure:
+        {
+            "title": "string",
+            "description": "string",
+            "tags": ["tag1", "tag2", "tag3"]
+        }
+        
+        ## STRICT RULES
+        - Title MUST be exactly 10 characters or less (count every character including spaces)
+        - Description MUST be exactly 30 characters or less (count every character including spaces)
+        - Tags must be an array with maximum 10 items
+        - Tags should be lowercase, single words or short phrases (no spaces)
+        - Return ONLY the JSON, no additional text
+        - CRITICAL: Respect the character limits strictly
+        """
+
+        user_prompt = f"""
+        Based on this media content description, generate a title (max 10 chars), description (max 30 chars), and tags (max 10):
+        
+        {combined_description}
+        
+        Return the JSON object as specified. Remember: title <= 10 chars, description <= 30 chars, tags <= 10 items.
+        """
+
+        # Build prompt
+        prompt = gemini_service.buildPrompt(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            files=None
+        )
+
+        # Call Gemini API
+        response_text = await gemini_service.textToText(prompt)
+
+        # Parse JSON response and enforce constraints
+        try:
+            # Try to extract JSON from response (in case there's extra text)
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            if json_start != -1 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                metadata = json.loads(json_str)
+            else:
+                # If no JSON object is found, trigger the exception to use fallback
+                raise json.JSONDecodeError("No JSON object found in response", response_text, 0)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Failed to parse JSON response: {response_text}. Error: {e}", flush=True)
+            # Fallback: create basic metadata with strict constraints
+            words = combined_description.split()
+            title = combined_description[:10] if len(combined_description) >= 10 else combined_description
+            description = combined_description[:30] if len(combined_description) >= 30 else combined_description
+            tags = [w.lower()[:20] for w in words[:10]]  # Max 10 tags, each word max 20 chars
+            
+            metadata = {
+                "title": title,
+                "description": description,
+                "tags": tags
+            }
+
+        # Enforce strict constraints (truncate if needed)
+        if metadata.get("title"):
+            metadata["title"] = metadata["title"][:10]
+        if metadata.get("description"):
+            metadata["description"] = metadata["description"][:30]
+        if metadata.get("tags"):
+            if isinstance(metadata["tags"], list):
+                metadata["tags"] = metadata["tags"][:10]
+            else:
+                # Convert string to list if needed
+                tags_str = str(metadata["tags"])
+                metadata["tags"] = [tag.strip() for tag in tags_str.split(",")][:10]
 
         return metadata
 
