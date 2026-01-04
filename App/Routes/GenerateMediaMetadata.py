@@ -6,6 +6,7 @@ import json
 from App.Core.Mysql import MySQLService
 from App.Services.GeminiService import GeminiService
 from App.Services.MediaIngestService import MediaIngestService
+from os import getenv
 
 router = APIRouter(prefix="/api/v1", tags=["media"])
 
@@ -82,7 +83,8 @@ async def generate_media_metadata(req: MediaMetadataRequest):
     # Process media URLs (images and videos) to get combined description
     try:
         print(f"🔄 Processing {len(media_urls)} media URL(s) for media_id: {media_id}", flush=True)
-        combined_description = await MediaIngestService.process_media_urls(media_urls)
+        worker_url = getenv("CLOUDFLARE_WORKER_PINCAP_DETECT_VIDEO")
+        combined_description = await MediaIngestService.process_media_urls(media_urls, worker_url=worker_url)
         if not combined_description:
             raise ValueError("Failed to generate description from media")
         print(f"✅ Generated description: {combined_description[:100]}...", flush=True)

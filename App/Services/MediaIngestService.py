@@ -32,7 +32,7 @@ class MediaIngestService:
     generate embedding from provided fields (excluding media_url), and bulk index into Elasticsearch.
     """
 
-    def __init__(self, index_name: str = "media_embeddings_test_v3", mapping_: Dict[str, Any] = mapping):
+    def __init__(self, index_name: str = "media_embeddings", mapping_: Dict[str, Any] = mapping):
         self.index_name = index_name
         self.mapping = mapping_
         self.es_service = ElasticsearchService(self.index_name, self.mapping)
