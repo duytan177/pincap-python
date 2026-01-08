@@ -23,7 +23,7 @@ class ChatbotService:
             "temperature": 0.7,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 10048,
+            "max_output_tokens": 2048,
         }
         
         self.gemini_service = GeminiService(
@@ -154,6 +154,7 @@ class ChatbotService:
                 SELECT id, media_url
                 FROM medias
                 WHERE id IN ({placeholders})
+                and deleted_at is null
             """
             # Build params dict
             params = {f"id_{i}": media_id for i, media_id in enumerate(media_ids)}
@@ -215,26 +216,21 @@ class ChatbotService:
     def format_rag_context(self, media_list: List[Dict[str, Any]]) -> str:
         """
         Format media list into RAG context string for LLM.
+        Simplified format - only essential info.
         """
         if not media_list:
             return "Không tìm thấy media nào phù hợp."
         
         context_parts = []
         for i, media in enumerate(media_list, 1):
-            title = media.get("title", "N/A")
             description = media.get("description", "")
-            tags = media.get("tags", [])
-            tags_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
-            score = media.get("popularity_score", 0.0)
-            
-            context_parts.append(
-                f"Media {i}:\n"
-                f"- ID: {media.get('id')}\n"
-                f"- Title: {title}\n"
-                f"- Description: {description}\n"
-                f"- Tags: {tags_str}\n"
-                f"- Popularity Score: {score}\n"
-            )
+            # Only include description if it's meaningful (not empty)
+            if description:
+                context_parts.append(
+                    f"Media {i}: {description[:100]}"
+                )
+            else:
+                context_parts.append(f"Media {i}")
         
         return "\n".join(context_parts)
     
@@ -273,15 +269,16 @@ class ChatbotService:
         if match:
             user_requested_limit = int(match.group(1))
         
-        # System retrieves 500 from RAG, but user can only request max 50
-        rag_limit = 500  # System retrieves 500 for better selection
-        user_limit = min(user_requested_limit, 20) if user_requested_limit else None  # Max 20 for user
+        # System retrieves more from RAG for better selection, but user can only get max 10
+        rag_limit = 50  # Retrieve more for better selection
+        user_limit = min(user_requested_limit, 10) if user_requested_limit else 10  # Max 10 for user
         
         # Check if user requested too many
-        user_requested_too_many = user_requested_limit and user_requested_limit > 20
+        user_requested_too_many = user_requested_limit and user_requested_limit > 10
         
-        # Retrieve media via RAG (get 500 for better selection)
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit)
+        # Retrieve media via RAG with adaptive min_score
+        # Start with lower min_score to get more results, then filter
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.7)
         
         if not media_list:
             return {
@@ -290,12 +287,8 @@ class ChatbotService:
                 "media": []
             }
         
-        # Limit to user's requested amount (max 20)
-        if user_limit:
-            media_list = media_list[:user_limit]
-        else:
-            # Default to 50 if no specific request
-            media_list = media_list[:20]
+        # Limit to user's requested amount (max 10)
+        media_list = media_list[:user_limit]
         
         # Format RAG context for LLM (use all retrieved for better context)
         rag_context = self.format_rag_context(media_list)
@@ -318,12 +311,12 @@ class ChatbotService:
         - Otherwise, provide a normal conversational answer
         
         ## LIMIT NOTIFICATION
-        - If user requested more than 20 media, mention that you can only provide up to 20 media at a time
+        - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
         """
         
         limit_notice = ""
         if user_requested_too_many:
-            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 20 media at a time."
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
         
         user_prompt = f"""
         RAG Context (Media Data):
@@ -334,7 +327,7 @@ class ChatbotService:
         Answer the user's question based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
-        If user requested more than 20 media, politely mention the 20 media limit.
+        If user requested more than 10 media, politely mention the 10 media limit.
         """
         
         history = conversation_history or []
@@ -349,7 +342,7 @@ class ChatbotService:
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
             if user_requested_too_many:
-                answer = f"Tôi chỉ có thể cung cấp tối đa 20 media. Đây là 20 media bạn cần:"
+                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là 10 media bạn cần:"
             else:
                 answer = "Đây là các media bạn cần:"
         
@@ -369,20 +362,21 @@ class ChatbotService:
         Handle SUGGEST_MEDIA intent: suggest media and ask for album confirmation.
         """
         # Extract number if user asks for specific count
-        user_requested_limit = 20
+        user_requested_limit = 10
         match = re.search(r'(\d+)', user_message)
         if match:
             user_requested_limit = int(match.group(1))
         
-        # System retrieves 500 from RAG, but user can only request max 50
-        rag_limit = 500  # System retrieves 500 for better selection
-        user_limit = min(user_requested_limit, 20) if user_requested_limit else 20  # Default 20, max 50 for user
+        # System retrieves more from RAG for better selection, but user can only get max 10
+        rag_limit = 50  # Retrieve more for better selection
+        user_limit = min(user_requested_limit, 10) if user_requested_limit else 10  # Default 10, max 10 for user
         
         # Check if user requested too many
-        user_requested_too_many = user_requested_limit and user_requested_limit > 20
+        user_requested_too_many = user_requested_limit and user_requested_limit > 10
         
-        # Retrieve media via RAG (get 500 for better selection)
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.65)
+        # Retrieve media via RAG with adaptive min_score
+        # Start with lower min_score to get more results, then filter
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.6)
         
         if not media_list:
             return {
@@ -392,7 +386,7 @@ class ChatbotService:
                 "ask_confirmation": None
             }
         
-        # Limit to user's requested amount (max 50)
+        # Limit to user's requested amount (max 10)
         media_list = media_list[:user_limit]
         
         # Format RAG context for LLM
@@ -416,12 +410,12 @@ class ChatbotService:
         - Otherwise, provide a normal conversational suggestion
         
         ## LIMIT NOTIFICATION
-        - If user requested more than 20 media, mention that you can only provide up to 20 media at a time
+        - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
         """
         
         limit_notice = ""
         if user_requested_too_many:
-            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 20 media at a time."
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
         
         user_prompt = f"""
         RAG Context (Media Data):
@@ -432,7 +426,7 @@ class ChatbotService:
         Suggest media to the user based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
-        If user requested more than 20 media, politely mention the 20 media limit.
+        If user requested more than 10 media, politely mention the 10 media limit.
         """
         
         history = conversation_history or []
@@ -447,7 +441,7 @@ class ChatbotService:
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
             if user_requested_too_many:
-                answer = f"Tôi chỉ có thể cung cấp tối đa 20 media. Đây là 20 media gợi ý:"
+                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là 10 media gợi ý:"
             else:
                 answer = "Đây là các media gợi ý:"
         
