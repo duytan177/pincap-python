@@ -23,7 +23,7 @@ class ChatbotService:
             "temperature": 0.7,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 4048,
+            "max_output_tokens": 10048,
         }
         
         self.gemini_service = GeminiService(
@@ -132,14 +132,77 @@ class ChatbotService:
             source_fields=["media_id", "name", "description", "ai_description", "tags", "user_id"]
         )
         
-        # Format results
-        media_list = []
+        # Get media_ids from ES results
+        media_ids = []
+        es_media_map = {}
         for hit in result_data.get("hits", {}).get("hits", []):
             source = hit.get("_source", {})
-            score = hit.get("_score", 0.0)
+            media_id = source.get("media_id")
+            if media_id:
+                media_ids.append(media_id)
+                es_media_map[media_id] = {
+                    "source": source,
+                    "score": hit.get("_score", 0.0)
+                }
+        
+        # Query DB to get media_url for all media_ids in one query (fix N+1)
+        media_urls_map = {}
+        if media_ids:
+            # Build IN clause with placeholders
+            placeholders = ",".join([f":id_{i}" for i in range(len(media_ids))])
+            query_db = f"""
+                SELECT id, media_url
+                FROM medias
+                WHERE id IN ({placeholders})
+            """
+            # Build params dict
+            params = {f"id_{i}": media_id for i, media_id in enumerate(media_ids)}
             
+            # Execute single query for all media_ids
+            db_results = mysql.execute_raw_sql(
+                query_db, 
+                params=params,
+                fetch_all=True
+            )
+            
+            # Process results
+            for db_result in db_results:
+                media_id_str = str(db_result.get("id"))
+                media_url = db_result.get("media_url")
+                
+                # Parse media_url (can be JSON string, list, or single string)
+                if isinstance(media_url, str):
+                    try:
+                        media_url = json.loads(media_url)
+                    except json.JSONDecodeError:
+                        # If not JSON, treat as plain string
+                        pass
+                
+                # Normalize to get first URL if it's a list
+                if isinstance(media_url, list):
+                    media_url = media_url[0] if media_url else ""
+                elif not isinstance(media_url, str):
+                    media_url = ""
+                
+                media_urls_map[media_id_str] = media_url
+        
+        # Format results - keep full data for RAG context, but prepare simplified response
+        media_list = []
+        for media_id in media_ids:
+            if media_id not in es_media_map:
+                continue
+                
+            es_data = es_media_map[media_id]
+            source = es_data["source"]
+            score = es_data["score"]
+            
+            # Get media_url from DB (first one if list)
+            media_url = media_urls_map.get(media_id, "")
+            
+            # Store full data for RAG context
             media_list.append({
-                "id": source.get("media_id"),
+                "id": media_id,
+                "media_url": media_url,
                 "title": source.get("name", ""),
                 "description": source.get("description") or source.get("ai_description", ""),
                 "tags": source.get("tags", []),
@@ -174,6 +237,26 @@ class ChatbotService:
             )
         
         return "\n".join(context_parts)
+    
+    def format_media_response(self, media_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Format media list for API response - only return id and media_url (first image if list).
+        """
+        result = []
+        for media in media_list:
+            media_url = media.get("media_url", "")
+            # If media_url is a list, get first item
+            if isinstance(media_url, list):
+                media_url = media_url[0] if media_url else ""
+            elif not isinstance(media_url, str):
+                media_url = ""
+            
+            result.append({
+                "id": media.get("id"),
+                "media_url": media_url
+            })
+        return result
+
 
     async def handle_search_media(
         self,
@@ -185,13 +268,20 @@ class ChatbotService:
         Handle SEARCH_MEDIA intent: search and answer questions about media.
         """
         # Extract number if user asks for specific count
-        limit = 10
+        user_requested_limit = None
         match = re.search(r'(\d+)', user_message)
         if match:
-            limit = min(int(match.group(1)), 50)  # Max 50
+            user_requested_limit = int(match.group(1))
         
-        # Retrieve media via RAG
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=limit)
+        # System retrieves 500 from RAG, but user can only request max 50
+        rag_limit = 500  # System retrieves 500 for better selection
+        user_limit = min(user_requested_limit, 20) if user_requested_limit else None  # Max 20 for user
+        
+        # Check if user requested too many
+        user_requested_too_many = user_requested_limit and user_requested_limit > 20
+        
+        # Retrieve media via RAG (get 500 for better selection)
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit)
         
         if not media_list:
             return {
@@ -200,7 +290,14 @@ class ChatbotService:
                 "media": []
             }
         
-        # Format RAG context
+        # Limit to user's requested amount (max 20)
+        if user_limit:
+            media_list = media_list[:user_limit]
+        else:
+            # Default to 50 if no specific request
+            media_list = media_list[:20]
+        
+        # Format RAG context for LLM (use all retrieved for better context)
         rag_context = self.format_rag_context(media_list)
         
         # Generate answer using LLM with RAG context
@@ -212,16 +309,32 @@ class ChatbotService:
         - Do NOT invent or hallucinate data
         - Answer in Vietnamese
         - Be concise and product-oriented
-        - List media with title and short description
+        - Do NOT repeat title, description, or tags in your answer
+        - Just provide a natural, conversational answer about the media
+        
+        ## IMPORTANT: USER PREFERENCE DETECTION
+        - If the user asks for "chỉ cần ảnh", "chỉ trả ảnh", "không trả lời dài", "chỉ media", "only image", or similar requests for ONLY media/images without explanation:
+          → Return ONLY the word "MEDIA_ONLY" (no other text)
+        - Otherwise, provide a normal conversational answer
+        
+        ## LIMIT NOTIFICATION
+        - If user requested more than 20 media, mention that you can only provide up to 20 media at a time
         """
+        
+        limit_notice = ""
+        if user_requested_too_many:
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 20 media at a time."
         
         user_prompt = f"""
         RAG Context (Media Data):
         {rag_context}
         
-        User Question: {user_message}
+        User Question: {user_message}{limit_notice}
         
-        Answer the user's question based ONLY on the RAG context above. List the media with title and short description.
+        Answer the user's question based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        
+        If user wants only media/images without explanation, return "MEDIA_ONLY" only.
+        If user requested more than 20 media, politely mention the 20 media limit.
         """
         
         history = conversation_history or []
@@ -233,10 +346,17 @@ class ChatbotService:
         
         answer = await self.gemini_service.textToText(prompt)
         
+        # Check if LLM decided to return only media
+        if answer.strip().upper() == "MEDIA_ONLY":
+            if user_requested_too_many:
+                answer = f"Tôi chỉ có thể cung cấp tối đa 20 media. Đây là 20 media bạn cần:"
+            else:
+                answer = "Đây là các media bạn cần:"
+        
         return {
             "intent": "SEARCH_MEDIA",
             "answer": answer,
-            "media": media_list
+            "media": self.format_media_response(media_list)
         }
 
     async def handle_suggest_media(
@@ -249,13 +369,20 @@ class ChatbotService:
         Handle SUGGEST_MEDIA intent: suggest media and ask for album confirmation.
         """
         # Extract number if user asks for specific count
-        limit = 20
+        user_requested_limit = 20
         match = re.search(r'(\d+)', user_message)
         if match:
-            limit = min(int(match.group(1)), 50)  # Max 50
+            user_requested_limit = int(match.group(1))
         
-        # Retrieve media via RAG
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=limit, min_score=0.65)
+        # System retrieves 500 from RAG, but user can only request max 50
+        rag_limit = 500  # System retrieves 500 for better selection
+        user_limit = min(user_requested_limit, 20) if user_requested_limit else 20  # Default 20, max 50 for user
+        
+        # Check if user requested too many
+        user_requested_too_many = user_requested_limit and user_requested_limit > 20
+        
+        # Retrieve media via RAG (get 500 for better selection)
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.65)
         
         if not media_list:
             return {
@@ -265,7 +392,10 @@ class ChatbotService:
                 "ask_confirmation": None
             }
         
-        # Format RAG context
+        # Limit to user's requested amount (max 50)
+        media_list = media_list[:user_limit]
+        
+        # Format RAG context for LLM
         rag_context = self.format_rag_context(media_list)
         
         # Generate answer using LLM with RAG context
@@ -277,16 +407,32 @@ class ChatbotService:
         - Do NOT invent or hallucinate data
         - Answer in Vietnamese
         - Be concise and friendly
-        - Present the suggested media list
+        - Do NOT repeat title, description, or tags in your answer
+        - Just provide a natural, conversational suggestion
+        
+        ## IMPORTANT: USER PREFERENCE DETECTION
+        - If the user asks for "chỉ cần ảnh", "chỉ trả ảnh", "không trả lời dài", "chỉ media", "only image", or similar requests for ONLY media/images without explanation:
+          → Return ONLY the word "MEDIA_ONLY" (no other text)
+        - Otherwise, provide a normal conversational suggestion
+        
+        ## LIMIT NOTIFICATION
+        - If user requested more than 20 media, mention that you can only provide up to 20 media at a time
         """
+        
+        limit_notice = ""
+        if user_requested_too_many:
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 20 media at a time."
         
         user_prompt = f"""
         RAG Context (Media Data):
         {rag_context}
         
-        User Request: {user_message}
+        User Request: {user_message}{limit_notice}
         
-        Suggest media to the user based ONLY on the RAG context above. Present the suggestions in a friendly way.
+        Suggest media to the user based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        
+        If user wants only media/images without explanation, return "MEDIA_ONLY" only.
+        If user requested more than 20 media, politely mention the 20 media limit.
         """
         
         history = conversation_history or []
@@ -298,10 +444,17 @@ class ChatbotService:
         
         answer = await self.gemini_service.textToText(prompt)
         
+        # Check if LLM decided to return only media
+        if answer.strip().upper() == "MEDIA_ONLY":
+            if user_requested_too_many:
+                answer = f"Tôi chỉ có thể cung cấp tối đa 20 media. Đây là 20 media gợi ý:"
+            else:
+                answer = "Đây là các media gợi ý:"
+        
         return {
             "intent": "SUGGEST_MEDIA",
             "answer": answer,
-            "media": media_list,
+            "media": self.format_media_response(media_list),
             "ask_confirmation": {
                 "action": "CREATE_ALBUM",
                 "message": "Bạn có muốn tạo album từ các media này không?"
