@@ -221,23 +221,13 @@ class ChatbotService:
     def format_rag_context(self, media_list: List[Dict[str, Any]]) -> str:
         """
         Format media list into RAG context string for LLM.
-        Simplified format - only essential info.
+        Simplified format - minimal info, no description.
         """
         if not media_list:
             return "Không tìm thấy media nào phù hợp."
         
-        context_parts = []
-        for i, media in enumerate(media_list, 1):
-            description = media.get("description", "")
-            # Only include description if it's meaningful (not empty)
-            if description:
-                context_parts.append(
-                    f"Media {i}: {description[:100]}"
-                )
-            else:
-                context_parts.append(f"Media {i}")
-        
-        return "\n".join(context_parts)
+        # Just return count of media, no description needed
+        return f"Tìm thấy {len(media_list)} media phù hợp với yêu cầu."
     
     def format_media_response(self, media_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -298,31 +288,48 @@ class ChatbotService:
         # Only return up to user_limit (max 10), but if we found fewer, return what we have
         actual_count = len(media_list)
         media_list = media_list[:user_limit]
-        final_count = len(media_list)
         
-        # Format RAG context for LLM (use all retrieved for better context)
+        # Format media response - this will filter out media without valid media_url
+        formatted_media = self.format_media_response(media_list)
+        final_count = len(formatted_media)
+        
+        # If no media with valid media_url, return empty
+        if final_count == 0:
+            return {
+                "intent": "SEARCH_MEDIA",
+                "answer": "Xin lỗi, tôi không tìm thấy media nào phù hợp với yêu cầu của bạn.",
+                "media": []
+            }
+        
+        # Format RAG context for LLM (minimal context, no description)
         rag_context = self.format_rag_context(media_list)
         
         # Generate answer using LLM with RAG context
         system_prompt = """
-        You are a helpful media management assistant. Answer user questions about media using ONLY the provided RAG context.
+        You are a helpful media management assistant. Answer user questions about media.
         
         ## RULES
-        - Use ONLY information from the RAG context provided
-        - Do NOT invent or hallucinate data
         - Answer in Vietnamese
-        - Be concise and product-oriented
-        - Do NOT repeat title, description, or tags in your answer
-        - Just provide a natural, conversational answer about the media
+        - Be VERY concise and brief
+        - Do NOT mention, list, or describe any media descriptions, titles, or tags
+        - Do NOT provide detailed information about media content
+        - Just acknowledge that media was found and provide a short response
+        - Keep your answer under 2 sentences maximum
+        
+        ## IMPORTANT: NO DESCRIPTIONS
+        - NEVER mention what the media contains or describes
+        - NEVER list media details
+        - NEVER repeat any description from context
+        - Just say you found the media and that's it
         
         ## IMPORTANT: USER PREFERENCE DETECTION
         - If the user asks for "chỉ cần ảnh", "chỉ trả ảnh", "không trả lời dài", "chỉ media", "only image", or similar requests for ONLY media/images without explanation:
           → Return ONLY the word "MEDIA_ONLY" (no other text)
-        - Otherwise, provide a normal conversational answer
+        - Otherwise, provide a very brief acknowledgment
         
         ## LIMIT NOTIFICATION
-        - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
-        - If you found fewer media than requested, naturally mention the actual count found
+        - If user requested more than 10 media, briefly mention the 10 media limit
+        - If you found fewer media than requested, briefly mention the actual count found
         """
         
         limit_notice = ""
@@ -332,16 +339,15 @@ class ChatbotService:
             limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score."
         
         user_prompt = f"""
-        RAG Context (Media Data):
-        {rag_context}
-        
         User Question: {user_message}{limit_notice}
         
-        Answer the user's question based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        Context: {rag_context}
+        
+        Provide a VERY brief answer. Do NOT mention any media descriptions, titles, or details. Just acknowledge you found the media.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
-        If user requested more than 10 media, politely mention the 10 media limit.
-        If fewer media were found than requested, naturally mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
+        If user requested more than 10 media, briefly mention the 10 media limit.
+        If fewer media were found than requested, briefly mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
         """
         
         history = conversation_history or []
@@ -371,7 +377,7 @@ class ChatbotService:
         return {
             "intent": "SEARCH_MEDIA",
             "answer": answer,
-            "media": self.format_media_response(media_list)
+            "media": formatted_media
         }
 
     async def handle_suggest_media(
@@ -433,24 +439,30 @@ class ChatbotService:
         
         # Generate answer using LLM with RAG context
         system_prompt = """
-        You are a helpful media management assistant. Suggest media to users using ONLY the provided RAG context.
+        You are a helpful media management assistant. Suggest media to users.
         
         ## RULES
-        - Use ONLY information from the RAG context provided
-        - Do NOT invent or hallucinate data
         - Answer in Vietnamese
-        - Be concise and friendly
-        - Do NOT repeat title, description, or tags in your answer
-        - Just provide a natural, conversational suggestion
+        - Be VERY concise and brief
+        - Do NOT mention, list, or describe any media descriptions, titles, or tags
+        - Do NOT provide detailed information about media content
+        - Just acknowledge that media was found and provide a short suggestion
+        - Keep your answer under 2 sentences maximum
+        
+        ## IMPORTANT: NO DESCRIPTIONS
+        - NEVER mention what the media contains or describes
+        - NEVER list media details
+        - NEVER repeat any description from context
+        - Just say you found the media suggestions and that's it
         
         ## IMPORTANT: USER PREFERENCE DETECTION
         - If the user asks for "chỉ cần ảnh", "chỉ trả ảnh", "không trả lời dài", "chỉ media", "only image", or similar requests for ONLY media/images without explanation:
           → Return ONLY the word "MEDIA_ONLY" (no other text)
-        - Otherwise, provide a normal conversational suggestion
+        - Otherwise, provide a very brief suggestion
         
         ## LIMIT NOTIFICATION
-        - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
-        - If you found fewer media than requested, naturally mention the actual count found
+        - If user requested more than 10 media, briefly mention the 10 media limit
+        - If you found fewer media than requested, briefly mention the actual count found
         - IMPORTANT: Only mention the exact number of media that will be returned
         """
         
@@ -463,18 +475,17 @@ class ChatbotService:
             limit_notice = f"\n\nNote: Found {final_count} media with valid URLs to return."
         
         user_prompt = f"""
-        RAG Context (Media Data):
-        {rag_context}
-        
         User Request: {user_message}{limit_notice}
         
-        Suggest media to the user based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        Context: {rag_context}
+        
+        Provide a VERY brief suggestion. Do NOT mention any media descriptions, titles, or details. Just acknowledge you found the media suggestions.
         
         IMPORTANT: You will return exactly {final_count} media. Make sure your answer mentions the correct count.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
-        If user requested more than 10 media, politely mention the 10 media limit.
-        If fewer media were found than requested, naturally mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
+        If user requested more than 10 media, briefly mention the 10 media limit.
+        If fewer media were found than requested, briefly mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
         """
         
         history = conversation_history or []
