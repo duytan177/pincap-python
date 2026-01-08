@@ -132,9 +132,10 @@ class GeminiService:
                 if response.status_code == 200:
                     return response.json()
                 
-                # Nếu gặp lỗi 429 (rate limit) và có key rotation
-                if response.status_code == 429 and self.use_key_rotation and self.key_manager:
-                    print(f"⚠️ API key bị rate limit (429) ở lần thử {attempt + 1}/{max_retries}", flush=True)
+                # Nếu gặp lỗi 429 (rate limit) hoặc 503 (overloaded) và có key rotation
+                if response.status_code in [429, 503] and self.use_key_rotation and self.key_manager:
+                    error_type = "rate limit (429)" if response.status_code == 429 else "overloaded (503)"
+                    print(f"⚠️ API key bị {error_type} ở lần thử {attempt + 1}/{max_retries}", flush=True)
                     
                     # Đánh dấu key hiện tại bị failed
                     self.key_manager.mark_key_failed(current_key)
@@ -142,21 +143,21 @@ class GeminiService:
                     # Kiểm tra xem còn key nào không
                     if self.key_manager.get_available_count() == 0:
                         # Nếu hết key, reset và thử lại
-                        print("🔄 Tất cả keys đều bị rate limit, reset và thử lại...", flush=True)
+                        print(f"🔄 Tất cả keys đều bị {error_type}, reset và thử lại...", flush=True)
                         self.key_manager.reset_failed_keys()
                     
                     # Rotate sang key tiếp theo (nếu còn key)
                     if attempt < max_retries - 1:  # Chỉ rotate nếu còn lần retry
                         new_key = self.key_manager.rotate_to_next_key()
                         self.api_key = new_key
-                        last_error = f"Rate limit (429) - đã chuyển sang key khác"
+                        last_error = f"{error_type} - đã chuyển sang key khác"
                         continue
                     else:
-                        last_error = f"Rate limit (429) - đã thử hết {max_retries} lần"
+                        last_error = f"{error_type} - đã thử hết {max_retries} lần"
                 
                 # Các lỗi khác
                 last_error = f"Gemini API error {response.status_code}: {response.text}"
-                if response.status_code != 429:  # Không retry cho các lỗi khác 429
+                if response.status_code not in [429, 503]:  # Không retry cho các lỗi khác 429 và 503
                     raise RuntimeError(last_error)
                     
             except requests.exceptions.RequestException as e:
@@ -211,9 +212,10 @@ class GeminiService:
                         raise ValueError(f"⚠️ No embedding found in response: {json.dumps(data, indent=2)}")
                     return embedding
 
-                # Nếu gặp lỗi 429 (rate limit) và có key rotation
-                if response.status_code == 429 and self.use_key_rotation and self.key_manager:
-                    print(f"⚠️ API key bị rate limit (429) ở embedding API - lần thử {attempt + 1}/{max_retries}", flush=True)
+                # Nếu gặp lỗi 429 (rate limit) hoặc 503 (overloaded) và có key rotation
+                if response.status_code in [429, 503] and self.use_key_rotation and self.key_manager:
+                    error_type = "rate limit (429)" if response.status_code == 429 else "overloaded (503)"
+                    print(f"⚠️ API key bị {error_type} ở embedding API - lần thử {attempt + 1}/{max_retries}", flush=True)
                     
                     # Đánh dấu key hiện tại bị failed
                     self.key_manager.mark_key_failed(current_key)
@@ -221,21 +223,21 @@ class GeminiService:
                     # Kiểm tra xem còn key nào không
                     if self.key_manager.get_available_count() == 0:
                         # Nếu hết key, reset và thử lại
-                        print("🔄 Tất cả keys đều bị rate limit, reset và thử lại...", flush=True)
+                        print(f"🔄 Tất cả keys đều bị {error_type}, reset và thử lại...", flush=True)
                         self.key_manager.reset_failed_keys()
                     
                     # Rotate sang key tiếp theo (nếu còn lần retry)
                     if attempt < max_retries - 1:
                         new_key = self.key_manager.rotate_to_next_key()
                         self.api_key = new_key
-                        last_error = f"Rate limit (429) - đã chuyển sang key khác"
+                        last_error = f"{error_type} - đã chuyển sang key khác"
                         continue
                     else:
-                        last_error = f"Rate limit (429) - đã thử hết {max_retries} lần"
+                        last_error = f"{error_type} - đã thử hết {max_retries} lần"
 
                 # Các lỗi khác
                 last_error = f"[GeminiEmbeddingError] HTTP {response.status_code}: {response.text}"
-                if response.status_code != 429:  # Không retry cho các lỗi khác 429
+                if response.status_code not in [429, 503]:  # Không retry cho các lỗi khác 429 và 503
                     raise RuntimeError(last_error)
                     
             except requests.exceptions.RequestException as e:
