@@ -44,8 +44,8 @@ async def generate_media_metadata(req: MediaMetadataRequest):
     
     Processes media_url(s) which can include multiple images and videos.
     Uses LLM to generate:
-    - Title: max 10 characters
-    - Description: max 30 characters
+    - Title: max 10 words
+    - Description: max 30 words
     - Tags: max 10 tags as array
     """
     media_id = req.media_id
