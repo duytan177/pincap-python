@@ -90,7 +90,7 @@ class GeminiService:
             for turn in history:
                 contents.append({
                     "role": turn["role"],
-                    "parts": [turn["content"]]
+                    "parts": [{"text": turn["content"]}]
                 })
 
         return contents
