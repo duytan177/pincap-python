@@ -280,9 +280,9 @@ class ChatbotService:
         # Check if user requested too many
         user_requested_too_many = user_requested_limit and user_requested_limit > 10
         
-        # Retrieve media via RAG with adaptive min_score
-        # Start with lower min_score to get more results, then filter
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.7)
+        # Retrieve media via RAG with higher min_score to ensure quality
+        # Use min_score=0.75 to only get highly relevant media
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.75)
         
         if not media_list:
             return {
@@ -291,8 +291,10 @@ class ChatbotService:
                 "media": []
             }
         
-        # Limit to user's requested amount (max 10)
+        # Only return up to user_limit (max 10), but if we found fewer, return what we have
+        actual_count = len(media_list)
         media_list = media_list[:user_limit]
+        final_count = len(media_list)
         
         # Format RAG context for LLM (use all retrieved for better context)
         rag_context = self.format_rag_context(media_list)
@@ -316,11 +318,14 @@ class ChatbotService:
         
         ## LIMIT NOTIFICATION
         - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
+        - If you found fewer media than requested, naturally mention the actual count found
         """
         
         limit_notice = ""
         if user_requested_too_many:
             limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
+        elif user_requested_limit and final_count < user_requested_limit:
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score."
         
         user_prompt = f"""
         RAG Context (Media Data):
@@ -332,6 +337,7 @@ class ChatbotService:
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
         If user requested more than 10 media, politely mention the 10 media limit.
+        If fewer media were found than requested, naturally mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
         """
         
         history = conversation_history or []
@@ -352,7 +358,9 @@ class ChatbotService:
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
             if user_requested_too_many:
-                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là 10 media bạn cần:"
+                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là {final_count} media bạn cần:"
+            elif user_requested_limit and final_count < user_requested_limit:
+                answer = f"Tôi tìm thấy {final_count} media phù hợp với yêu cầu của bạn:"
             else:
                 answer = "Đây là các media bạn cần:"
         
@@ -384,9 +392,9 @@ class ChatbotService:
         # Check if user requested too many
         user_requested_too_many = user_requested_limit and user_requested_limit > 10
         
-        # Retrieve media via RAG with adaptive min_score
-        # Start with lower min_score to get more results, then filter
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.6)
+        # Retrieve media via RAG with higher min_score to ensure quality
+        # Use min_score=0.7 to get relevant media (slightly lower than search for suggestions)
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.7)
         
         if not media_list:
             return {
@@ -396,8 +404,10 @@ class ChatbotService:
                 "ask_confirmation": None
             }
         
-        # Limit to user's requested amount (max 10)
+        # Only return up to user_limit (max 10), but if we found fewer, return what we have
+        actual_count = len(media_list)
         media_list = media_list[:user_limit]
+        final_count = len(media_list)
         
         # Format RAG context for LLM
         rag_context = self.format_rag_context(media_list)
@@ -421,11 +431,14 @@ class ChatbotService:
         
         ## LIMIT NOTIFICATION
         - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
+        - If you found fewer media than requested, naturally mention the actual count found
         """
         
         limit_notice = ""
         if user_requested_too_many:
             limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
+        elif user_requested_limit and final_count < user_requested_limit:
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score."
         
         user_prompt = f"""
         RAG Context (Media Data):
@@ -437,6 +450,7 @@ class ChatbotService:
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
         If user requested more than 10 media, politely mention the 10 media limit.
+        If fewer media were found than requested, naturally mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
         """
         
         history = conversation_history or []
@@ -457,7 +471,9 @@ class ChatbotService:
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
             if user_requested_too_many:
-                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là 10 media gợi ý:"
+                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là {final_count} media gợi ý:"
+            elif user_requested_limit and final_count < user_requested_limit:
+                answer = f"Tôi tìm thấy {final_count} media phù hợp để gợi ý:"
             else:
                 answer = "Đây là các media gợi ý:"
         
