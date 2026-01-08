@@ -99,7 +99,7 @@ class GeminiService:
     # INTERNAL HELPERS
     # -----------------------------
 
-    async  def _call_gemini_api(self, payload: dict, max_retries: int = 6) -> dict:
+    async  def _call_gemini_api(self, payload: dict, max_retries: int = 8) -> dict:
         """
         Generic request caller for Gemini API với tự động retry khi gặp 429.
         
@@ -172,7 +172,7 @@ class GeminiService:
     # -----------------------------
     # 📦 CALL GEMINI EMBEDDING API
     # -----------------------------
-    async def call_gemini_api_embedding(self, text: str, dimension: int = 1536, max_retries: int = 6) -> List[float]:
+    async def call_gemini_api_embedding(self, text: str, dimension: int = 1536, max_retries: int = 8) -> List[float]:
         """
         Gọi Gemini Embedding API để sinh vector từ text.
         Dùng base_url truyền sẵn ở constructor.
