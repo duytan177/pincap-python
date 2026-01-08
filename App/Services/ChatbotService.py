@@ -242,6 +242,7 @@ class ChatbotService:
     def format_media_response(self, media_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Format media list for API response - only return id and media_url (first image if list).
+        Only return media that has a valid media_url.
         """
         result = []
         for media in media_list:
@@ -252,10 +253,12 @@ class ChatbotService:
             elif not isinstance(media_url, str):
                 media_url = ""
             
-            result.append({
-                "id": media.get("id"),
-                "media_url": media_url
-            })
+            # Only include media that has a valid media_url
+            if media_url and media_url.strip():
+                result.append({
+                    "id": media.get("id"),
+                    "media_url": media_url
+                })
         return result
 
 
@@ -408,10 +411,25 @@ class ChatbotService:
         # Only return up to user_limit (max 10), but if we found fewer, return what we have
         actual_count = len(media_list)
         media_list = media_list[:user_limit]
-        final_count = len(media_list)
         
-        # Format RAG context for LLM
-        rag_context = self.format_rag_context(media_list)
+        # Format media response - this will filter out media without valid media_url
+        formatted_media = self.format_media_response(media_list)
+        final_count = len(formatted_media)
+        
+        # If no media with valid media_url, return empty
+        if final_count == 0:
+            return {
+                "intent": "SUGGEST_MEDIA",
+                "answer": "Xin lỗi, tôi không tìm thấy media nào phù hợp để gợi ý.",
+                "media": [],
+                "ask_confirmation": None
+            }
+        
+        # Format RAG context for LLM (use only media that will be returned)
+        # Re-filter media_list to match formatted_media
+        media_ids_in_response = {m["id"] for m in formatted_media}
+        filtered_media_list = [m for m in media_list if m.get("id") in media_ids_in_response]
+        rag_context = self.format_rag_context(filtered_media_list)
         
         # Generate answer using LLM with RAG context
         system_prompt = """
@@ -433,13 +451,16 @@ class ChatbotService:
         ## LIMIT NOTIFICATION
         - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
         - If you found fewer media than requested, naturally mention the actual count found
+        - IMPORTANT: Only mention the exact number of media that will be returned
         """
         
         limit_notice = ""
         if user_requested_too_many:
-            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time. Actually found {final_count} media with valid URLs."
         elif user_requested_limit and final_count < user_requested_limit:
-            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score."
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score and valid URLs."
+        else:
+            limit_notice = f"\n\nNote: Found {final_count} media with valid URLs to return."
         
         user_prompt = f"""
         RAG Context (Media Data):
@@ -448,6 +469,8 @@ class ChatbotService:
         User Request: {user_message}{limit_notice}
         
         Suggest media to the user based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        
+        IMPORTANT: You will return exactly {final_count} media. Make sure your answer mentions the correct count.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
         If user requested more than 10 media, politely mention the 10 media limit.
@@ -476,12 +499,12 @@ class ChatbotService:
             elif user_requested_limit and final_count < user_requested_limit:
                 answer = f"Tôi tìm thấy {final_count} media phù hợp để gợi ý:"
             else:
-                answer = "Đây là các media gợi ý:"
+                answer = f"Đây là {final_count} media gợi ý:"
         
         return {
             "intent": "SUGGEST_MEDIA",
             "answer": answer,
-            "media": self.format_media_response(media_list),
+            "media": formatted_media,
             "ask_confirmation": {
                 "action": "CREATE_ALBUM",
                 "message": "Bạn có muốn tạo album từ các media này không?"
