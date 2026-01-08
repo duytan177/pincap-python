@@ -23,7 +23,7 @@ class ChatbotService:
             "temperature": 0.7,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 2048,
+            "max_output_tokens": 4048,
         }
         
         self.gemini_service = GeminiService(
@@ -464,7 +464,7 @@ class ChatbotService:
         Handle GENERAL_QA intent: answer general questions.
         """
         system_prompt = """
-        You are a helpful media management assistant. Answer user questions about the media management system.
+        You are a helpful media management assistant of system PinCap. Answer user questions about the media management system.
         
         ## RULES
         - Answer in Vietnamese
