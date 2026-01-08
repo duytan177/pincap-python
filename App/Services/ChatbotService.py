@@ -64,8 +64,14 @@ class ChatbotService:
             history=history
         )
         
+        # Debug log
+        print(f"\n🔍 [INTENT DETECTION] Prompt:", flush=True)
+        print(json.dumps(prompt, indent=2, ensure_ascii=False), flush=True)
+        
         response = await self.gemini_service.textToText(prompt)
         intent = response.strip().upper()
+        
+        print(f"🔍 [INTENT DETECTION] Response: {intent}", flush=True)
         
         # Validate intent
         valid_intents = ["SEARCH_MEDIA", "SUGGEST_MEDIA", "CONFIRM_CREATE_ALBUM", "CREATE_MEDIA_FROM_INPUT", "GENERAL_QA"]
@@ -200,13 +206,11 @@ class ChatbotService:
             # Get media_url from DB (first one if list)
             media_url = media_urls_map.get(media_id, "")
             
-            # Store full data for RAG context
+            # Store full data for RAG context (description needed for LLM, but not returned in response)
             media_list.append({
                 "id": media_id,
                 "media_url": media_url,
-                "title": source.get("name", ""),
                 "description": source.get("description") or source.get("ai_description", ""),
-                "tags": source.get("tags", []),
                 "popularity_score": round(score, 3),
                 "user_id": source.get("user_id")
             })
@@ -337,7 +341,13 @@ class ChatbotService:
             history=history
         )
         
+        # Debug log
+        print(f"\n🔍 [SEARCH_MEDIA] Prompt:", flush=True)
+        print(json.dumps(prompt, indent=2, ensure_ascii=False), flush=True)
+        
         answer = await self.gemini_service.textToText(prompt)
+        
+        print(f"🔍 [SEARCH_MEDIA] Response: {answer[:200]}...", flush=True)
         
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
@@ -436,7 +446,13 @@ class ChatbotService:
             history=history
         )
         
+        # Debug log
+        print(f"\n🔍 [SUGGEST_MEDIA] Prompt:", flush=True)
+        print(json.dumps(prompt, indent=2, ensure_ascii=False), flush=True)
+        
         answer = await self.gemini_service.textToText(prompt)
+        
+        print(f"🔍 [SUGGEST_MEDIA] Response: {answer[:200]}...", flush=True)
         
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
@@ -517,7 +533,13 @@ class ChatbotService:
             history=history
         )
         
+        # Debug log
+        print(f"\n🔍 [CONFIRM_CREATE_ALBUM] Prompt:", flush=True)
+        print(json.dumps(prompt, indent=2, ensure_ascii=False), flush=True)
+        
         response_text = await self.gemini_service.textToText(prompt)
+        
+        print(f"🔍 [CONFIRM_CREATE_ALBUM] Response: {response_text[:200]}...", flush=True)
         
         # Parse JSON response
         try:
@@ -629,7 +651,13 @@ class ChatbotService:
             history=history
         )
         
+        # Debug log
+        print(f"\n🔍 [GENERAL_QA] Prompt:", flush=True)
+        print(json.dumps(prompt, indent=2, ensure_ascii=False), flush=True)
+        
         answer = await self.gemini_service.textToText(prompt)
+        
+        print(f"🔍 [GENERAL_QA] Response: {answer[:200]}...", flush=True)
         
         return {
             "intent": "GENERAL_QA",
