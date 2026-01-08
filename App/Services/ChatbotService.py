@@ -145,42 +145,46 @@ class ChatbotService:
                     "score": hit.get("_score", 0.0)
                 }
         
-        # Query DB to get media_url for each media_id
+        # Query DB to get media_url for all media_ids in one query (fix N+1)
         media_urls_map = {}
         if media_ids:
-            # Query each media_id (simple and safe approach)
-            for media_id in media_ids:
-                query_db = """
-                    SELECT id, media_url
-                    FROM medias
-                    WHERE id = :media_id
-                    LIMIT 1
-                """
-                db_result = mysql.execute_raw_sql(
-                    query_db, 
-                    params={"media_id": media_id},
-                    fetch_all=False
-                )
+            # Build IN clause with placeholders
+            placeholders = ",".join([f":id_{i}" for i in range(len(media_ids))])
+            query_db = f"""
+                SELECT id, media_url
+                FROM medias
+                WHERE id IN ({placeholders})
+            """
+            # Build params dict
+            params = {f"id_{i}": media_id for i, media_id in enumerate(media_ids)}
+            
+            # Execute single query for all media_ids
+            db_results = mysql.execute_raw_sql(
+                query_db, 
+                params=params,
+                fetch_all=True
+            )
+            
+            # Process results
+            for db_result in db_results:
+                media_id_str = str(db_result.get("id"))
+                media_url = db_result.get("media_url")
                 
-                if db_result:
-                    media_id_str = str(db_result.get("id"))
-                    media_url = db_result.get("media_url")
-                    
-                    # Parse media_url (can be JSON string, list, or single string)
-                    if isinstance(media_url, str):
-                        try:
-                            media_url = json.loads(media_url)
-                        except json.JSONDecodeError:
-                            # If not JSON, treat as plain string
-                            pass
-                    
-                    # Normalize to get first URL if it's a list
-                    if isinstance(media_url, list):
-                        media_url = media_url[0] if media_url else ""
-                    elif not isinstance(media_url, str):
-                        media_url = ""
-                    
-                    media_urls_map[media_id_str] = media_url
+                # Parse media_url (can be JSON string, list, or single string)
+                if isinstance(media_url, str):
+                    try:
+                        media_url = json.loads(media_url)
+                    except json.JSONDecodeError:
+                        # If not JSON, treat as plain string
+                        pass
+                
+                # Normalize to get first URL if it's a list
+                if isinstance(media_url, list):
+                    media_url = media_url[0] if media_url else ""
+                elif not isinstance(media_url, str):
+                    media_url = ""
+                
+                media_urls_map[media_id_str] = media_url
         
         # Format results - keep full data for RAG context, but prepare simplified response
         media_list = []
