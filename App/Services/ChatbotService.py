@@ -446,6 +446,11 @@ class ChatbotService:
         ## LIMIT NOTIFICATION
         - If user requested more than 10 media, briefly mention the 10 media limit
         - If you found fewer media than requested, briefly mention the actual count found
+        
+        ## ALBUM CREATION HINT
+        - After showing search results, you can optionally mention that user can create an album from these media
+        - Keep it natural and brief, don't be pushy
+        - Only mention if it makes sense in the context
         """
         
         limit_notice = ""
@@ -464,6 +469,8 @@ class ChatbotService:
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
         If user requested more than 10 media, briefly mention the 10 media limit.
         If fewer media were found than requested, briefly mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
+        
+        Note: After showing the results, you can optionally mention that the user can create an album from these media if they want, but keep it brief and natural.
         """
         
         history = conversation_history or []
@@ -493,7 +500,11 @@ class ChatbotService:
         return {
             "intent": "SEARCH_MEDIA",
             "answer": answer,
-            "media": formatted_media
+            "media": formatted_media,
+            "ask_confirmation": {
+                "action": "CREATE_ALBUM",
+                "message": "Bạn có muốn tạo album từ các media này không?"
+            }
         }
 
     async def handle_suggest_media(
@@ -586,6 +597,11 @@ class ChatbotService:
         - If user requested more than 10 media, briefly mention the 10 media limit
         - If you found fewer media than requested, briefly mention the actual count found
         - IMPORTANT: Only mention the exact number of media that will be returned
+        
+        ## ALBUM CREATION HINT
+        - After showing suggestions, you can optionally mention that user can create an album from these media
+        - Keep it natural and brief, don't be pushy
+        - Only mention if it makes sense in the context
         """
         
         limit_notice = ""
@@ -608,6 +624,8 @@ class ChatbotService:
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
         If user requested more than 10 media, briefly mention the 10 media limit.
         If fewer media were found than requested, briefly mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
+        
+        Note: After showing the suggestions, you can optionally mention that the user can create an album from these media if they want, but keep it brief and natural.
         """
         
         history = conversation_history or []
