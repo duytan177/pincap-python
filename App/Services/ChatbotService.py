@@ -164,6 +164,7 @@ class ChatbotService:
                 SELECT id, media_url
                 FROM medias
                 WHERE id IN ({placeholders})
+                and is_created = 1
                 and deleted_at is null
             """
             # Build params dict
@@ -259,6 +260,7 @@ class ChatbotService:
     def format_media_response(self, media_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Format media list for API response - only return id and media_url (first image if list).
+        Only return media that has a valid media_url.
         """
         result = []
         for media in media_list:
@@ -269,10 +271,12 @@ class ChatbotService:
             elif not isinstance(media_url, str):
                 media_url = ""
             
-            result.append({
-                "id": media.get("id"),
-                "media_url": media_url
-            })
+            # Only include media that has a valid media_url
+            if media_url and media_url.strip():
+                result.append({
+                    "id": media.get("id"),
+                    "media_url": media_url
+                })
         return result
 
     async def filter_media_with_llm(
@@ -380,9 +384,9 @@ class ChatbotService:
         # Check if user requested too many
         user_requested_too_many = user_requested_limit and user_requested_limit > 10
         
-        # Retrieve media via RAG with adaptive min_score
-        # Start with lower min_score to get more results, then filter
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.7)
+        # Retrieve media via RAG with higher min_score to ensure quality
+        # Use min_score=0.75 to only get highly relevant media
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.75)
         
         if not media_list:
             return {
@@ -401,44 +405,72 @@ class ChatbotService:
         # Limit to user's requested amount (max 10)
         media_list = filtered_media_list[:user_limit]
         
-        # Format RAG context for LLM (use all retrieved for better context)
+        # Format media response - this will filter out media without valid media_url
+        formatted_media = self.format_media_response(media_list)
+        final_count = len(formatted_media)
+        
+        # If no media with valid media_url, return empty
+        if final_count == 0:
+            return {
+                "intent": "SEARCH_MEDIA",
+                "answer": "Xin lỗi, tôi không tìm thấy media nào phù hợp với yêu cầu của bạn.",
+                "media": []
+            }
+        
+        # Format RAG context for LLM (minimal context, no description)
         rag_context = self.format_rag_context(media_list)
         
         # Generate answer using LLM with RAG context
         system_prompt = """
-        You are a helpful media management assistant. Answer user questions about media using ONLY the provided RAG context.
+        You are a helpful media management assistant. Answer user questions about media.
         
         ## RULES
-        - Use ONLY information from the RAG context provided
-        - Do NOT invent or hallucinate data
         - Answer in Vietnamese
-        - Be concise and product-oriented
-        - Do NOT repeat title, description, or tags in your answer
-        - Just provide a natural, conversational answer about the media
+        - Be VERY concise and brief
+        - Do NOT mention, list, or describe any media descriptions, titles, or tags
+        - Do NOT provide detailed information about media content
+        - Just acknowledge that media was found and provide a short response
+        - Keep your answer under 2 sentences maximum
+        
+        ## IMPORTANT: NO DESCRIPTIONS
+        - NEVER mention what the media contains or describes
+        - NEVER list media details
+        - NEVER repeat any description from context
+        - Just say you found the media and that's it
         
         ## IMPORTANT: USER PREFERENCE DETECTION
         - If the user asks for "chỉ cần ảnh", "chỉ trả ảnh", "không trả lời dài", "chỉ media", "only image", or similar requests for ONLY media/images without explanation:
           → Return ONLY the word "MEDIA_ONLY" (no other text)
-        - Otherwise, provide a normal conversational answer
+        - Otherwise, provide a very brief acknowledgment
         
         ## LIMIT NOTIFICATION
-        - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
+        - If user requested more than 10 media, briefly mention the 10 media limit
+        - If you found fewer media than requested, briefly mention the actual count found
+        
+        ## ALBUM CREATION HINT
+        - After showing search results, you can optionally mention that user can create an album from these media
+        - Keep it natural and brief, don't be pushy
+        - Only mention if it makes sense in the context
         """
         
         limit_notice = ""
         if user_requested_too_many:
             limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
+        elif user_requested_limit and final_count < user_requested_limit:
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score."
         
         user_prompt = f"""
-        RAG Context (Media Data):
-        {rag_context}
-        
         User Question: {user_message}{limit_notice}
         
-        Answer the user's question based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        Context: {rag_context}
+        
+        Provide a VERY brief answer. Do NOT mention any media descriptions, titles, or details. Just acknowledge you found the media.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
-        If user requested more than 10 media, politely mention the 10 media limit.
+        If user requested more than 10 media, briefly mention the 10 media limit.
+        If fewer media were found than requested, briefly mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
+        
+        Note: After showing the results, you can optionally mention that the user can create an album from these media if they want, but keep it brief and natural.
         """
         
         history = conversation_history or []
@@ -459,14 +491,20 @@ class ChatbotService:
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
             if user_requested_too_many:
-                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là 10 media bạn cần:"
+                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là {final_count} media bạn cần:"
+            elif user_requested_limit and final_count < user_requested_limit:
+                answer = f"Tôi tìm thấy {final_count} media phù hợp với yêu cầu của bạn:"
             else:
                 answer = "Đây là các media bạn cần:"
         
         return {
             "intent": "SEARCH_MEDIA",
             "answer": answer,
-            "media": self.format_media_response(media_list)
+            "media": formatted_media,
+            "ask_confirmation": {
+                "action": "CREATE_ALBUM",
+                "message": "Bạn có muốn tạo album từ các media này không?"
+            }
         }
 
     async def handle_suggest_media(
@@ -491,9 +529,9 @@ class ChatbotService:
         # Check if user requested too many
         user_requested_too_many = user_requested_limit and user_requested_limit > 10
         
-        # Retrieve media via RAG with adaptive min_score
-        # Start with lower min_score to get more results, then filter
-        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.6)
+        # Retrieve media via RAG with higher min_score to ensure quality
+        # Use min_score=0.7 to get relevant media (slightly lower than search for suggestions)
+        media_list = await self.retrieve_media_rag(user_message, user_id, limit=rag_limit, min_score=0.7)
         
         if not media_list:
             return {
@@ -513,44 +551,81 @@ class ChatbotService:
         # Limit to user's requested amount (max 10)
         media_list = filtered_media_list[:user_limit]
         
-        # Format RAG context for LLM
-        rag_context = self.format_rag_context(media_list)
+        # Format media response - this will filter out media without valid media_url
+        formatted_media = self.format_media_response(media_list)
+        final_count = len(formatted_media)
+        
+        # If no media with valid media_url, return empty
+        if final_count == 0:
+            return {
+                "intent": "SUGGEST_MEDIA",
+                "answer": "Xin lỗi, tôi không tìm thấy media nào phù hợp để gợi ý.",
+                "media": [],
+                "ask_confirmation": None
+            }
+        
+        # Format RAG context for LLM (use only media that will be returned)
+        # Re-filter media_list to match formatted_media
+        media_ids_in_response = {m["id"] for m in formatted_media}
+        filtered_media_list = [m for m in media_list if m.get("id") in media_ids_in_response]
+        rag_context = self.format_rag_context(filtered_media_list)
         
         # Generate answer using LLM with RAG context
         system_prompt = """
-        You are a helpful media management assistant. Suggest media to users using ONLY the provided RAG context.
+        You are a helpful media management assistant. Suggest media to users.
         
         ## RULES
-        - Use ONLY information from the RAG context provided
-        - Do NOT invent or hallucinate data
         - Answer in Vietnamese
-        - Be concise and friendly
-        - Do NOT repeat title, description, or tags in your answer
-        - Just provide a natural, conversational suggestion
+        - Be VERY concise and brief
+        - Do NOT mention, list, or describe any media descriptions, titles, or tags
+        - Do NOT provide detailed information about media content
+        - Just acknowledge that media was found and provide a short suggestion
+        - Keep your answer under 2 sentences maximum
+        
+        ## IMPORTANT: NO DESCRIPTIONS
+        - NEVER mention what the media contains or describes
+        - NEVER list media details
+        - NEVER repeat any description from context
+        - Just say you found the media suggestions and that's it
         
         ## IMPORTANT: USER PREFERENCE DETECTION
         - If the user asks for "chỉ cần ảnh", "chỉ trả ảnh", "không trả lời dài", "chỉ media", "only image", or similar requests for ONLY media/images without explanation:
           → Return ONLY the word "MEDIA_ONLY" (no other text)
-        - Otherwise, provide a normal conversational suggestion
+        - Otherwise, provide a very brief suggestion
         
         ## LIMIT NOTIFICATION
-        - If user requested more than 10 media, mention that you can only provide up to 10 media at a time
+        - If user requested more than 10 media, briefly mention the 10 media limit
+        - If you found fewer media than requested, briefly mention the actual count found
+        - IMPORTANT: Only mention the exact number of media that will be returned
+        
+        ## ALBUM CREATION HINT
+        - After showing suggestions, you can optionally mention that user can create an album from these media
+        - Keep it natural and brief, don't be pushy
+        - Only mention if it makes sense in the context
         """
         
         limit_notice = ""
         if user_requested_too_many:
-            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time."
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but system can only provide up to 10 media at a time. Actually found {final_count} media with valid URLs."
+        elif user_requested_limit and final_count < user_requested_limit:
+            limit_notice = f"\n\nNote: User requested {user_requested_limit} media, but only found {final_count} media with high relevance score and valid URLs."
+        else:
+            limit_notice = f"\n\nNote: Found {final_count} media with valid URLs to return."
         
         user_prompt = f"""
-        RAG Context (Media Data):
-        {rag_context}
-        
         User Request: {user_message}{limit_notice}
         
-        Suggest media to the user based ONLY on the RAG context above. Be natural and conversational. Do NOT list titles, descriptions, or tags.
+        Context: {rag_context}
+        
+        Provide a VERY brief suggestion. Do NOT mention any media descriptions, titles, or details. Just acknowledge you found the media suggestions.
+        
+        IMPORTANT: You will return exactly {final_count} media. Make sure your answer mentions the correct count.
         
         If user wants only media/images without explanation, return "MEDIA_ONLY" only.
-        If user requested more than 10 media, politely mention the 10 media limit.
+        If user requested more than 10 media, briefly mention the 10 media limit.
+        If fewer media were found than requested, briefly mention the actual count (e.g., "Tôi tìm thấy {final_count} media phù hợp").
+        
+        Note: After showing the suggestions, you can optionally mention that the user can create an album from these media if they want, but keep it brief and natural.
         """
         
         history = conversation_history or []
@@ -571,14 +646,16 @@ class ChatbotService:
         # Check if LLM decided to return only media
         if answer.strip().upper() == "MEDIA_ONLY":
             if user_requested_too_many:
-                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là 10 media gợi ý:"
+                answer = f"Tôi chỉ có thể cung cấp tối đa 10 media. Đây là {final_count} media gợi ý:"
+            elif user_requested_limit and final_count < user_requested_limit:
+                answer = f"Tôi tìm thấy {final_count} media phù hợp để gợi ý:"
             else:
-                answer = "Đây là các media gợi ý:"
+                answer = f"Đây là {final_count} media gợi ý:"
         
         return {
             "intent": "SUGGEST_MEDIA",
             "answer": answer,
-            "media": self.format_media_response(media_list),
+            "media": formatted_media,
             "ask_confirmation": {
                 "action": "CREATE_ALBUM",
                 "message": "Bạn có muốn tạo album từ các media này không?"
@@ -893,16 +970,180 @@ class ChatbotService:
         conversation_history: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """
-        Handle GENERAL_QA intent: answer general questions.
+        Handle GENERAL_QA intent: answer general questions with rules.
         """
         system_prompt = """
         You are a helpful media management assistant of system PinCap. Answer user questions about the media management system.
         
-        ## RULES
-        - Answer in Vietnamese
-        - Be concise and helpful
-        - If you don't know something, say so
-        - Focus on media management features
+        ## ABOUT PINCAP SYSTEM
+        
+        PinCap is a media management system that helps users organize, search, and manage their media content (images, videos, etc.). The system provides intelligent features powered by AI to make media management easier and more efficient.
+        
+        ## RULES FOR CONVERSATION
+        
+        ### 1. LANGUAGE & TONE
+        - Always answer in Vietnamese
+        - Use friendly, professional, and helpful tone
+        - Be concise but informative
+        - Use "bạn" (you) when addressing the user
+        - Use "tôi" (I) when referring to yourself
+        
+        ### 2. CONTENT GUIDELINES
+        - Focus on media management features and capabilities
+        - Explain how to use the system features clearly
+        - Provide step-by-step instructions when appropriate
+        - If asked about something you don't know, politely say "Tôi không có thông tin về điều này" or "Tôi chưa được cập nhật về tính năng này"
+        - Do NOT make up features or capabilities that don't exist
+        - Do NOT provide information about other systems or unrelated topics
+        
+        ### 3. RESPONSE STRUCTURE
+        - Start with a greeting if it's the first interaction
+        - Answer the question directly
+        - Provide examples when helpful
+        - End with an offer to help further if appropriate
+        
+        ### 4. SYSTEM CAPABILITIES & FEATURES
+        
+        When users ask "Hệ thống này làm gì cho tôi?" or "PinCap làm gì?" or similar questions, explain:
+        
+        **Main Functions:**
+        1. **Tìm kiếm Media thông minh**: 
+           - Tìm kiếm media bằng từ khóa hoặc mô tả
+           - Sử dụng AI để hiểu ý định của bạn
+           - Ví dụ: "Tìm 10 media về robot", "Liệt kê media phổ biến nhất"
+        
+        2. **Gợi ý Media tự động**:
+           - Hệ thống sẽ gợi ý media phù hợp với sở thích của bạn
+           - Dựa trên chủ đề, tags, hoặc mô tả
+           - Ví dụ: "Gợi ý 20 media về anime One Piece"
+        
+        3. **Tạo Album tự động**:
+           - Tự động tạo album từ các media được gợi ý
+           - Hệ thống tự động đặt tên và mô tả album
+           - Giúp bạn tổ chức media một cách thông minh
+        
+        4. **Tạo Media từ URL**:
+           - Thêm media mới vào hệ thống từ URL
+           - Tự động phân tích và tạo metadata (tiêu đề, mô tả, tags)
+           - Ví dụ: "Tạo media từ URL này: https://..."
+        
+        5. **Quản lý Media**:
+           - Lưu trữ và tổ chức media của bạn
+           - Tìm kiếm nhanh chóng với AI
+           - Lọc media theo chủ đề, tags, hoặc mô tả
+        
+        **How to use:**
+        - Simply chat with me naturally in Vietnamese
+        - Ask me to search, suggest, or create media
+        - I'll help you manage your media collection efficiently
+        
+        ### 4.1. DETAILED SYSTEM FEATURES
+        
+        **1. MEDIA ENTITY & OPERATIONS**
+        
+        **Operations:**
+        - **CRUD_Media**: 
+          - Create: Tạo media mới (có thể từ URL hoặc upload file)
+          - Read: Xem thông tin và nội dung media
+          - Update: Chỉnh sửa title, description, tags, privacy settings
+          - Delete: Xóa media khỏi hệ thống
+        
+        - **Draft_Management**: 
+          - Lưu media ở trạng thái bản nháp (draft) trước khi xuất bản
+          - Chỉnh sửa bản nháp nhiều lần
+          - Xuất bản khi đã sẵn sàng
+        
+        - **Search_Engine**: 
+          - Text-based search: Tìm kiếm bằng metadata (title, description, tags)
+          - Image-based search: Tìm kiếm bằng độ tương đồng hình ảnh (visual similarity)
+          - Hỗ trợ tìm kiếm thông minh với AI embedding
+        
+        - **Interactions**: 
+          - React: Thêm emoji reactions (like, love, etc.) trên media
+          - Comment: Đăng và xem bình luận trên media
+          - Download: Xuất media về lưu trữ local
+          - Report: Báo cáo nội dung không phù hợp
+        
+        **2. ALBUM ENTITY & COLLABORATION**
+        **Operations:**
+        - **CRUD_Album**: 
+          - Create: Tạo album mới (có thể tự động hoặc thủ công)
+          - Read: Xem danh sách media trong album
+          - Update: Chỉnh sửa tên, mô tả, privacy của album
+          - Delete: Xóa album
+        
+        - **Share_Mechanism**: 
+          - Tạo Share Link duy nhất cho album
+          - Cho phép người khác xem album qua link mà không cần đăng nhập
+          - Có thể kiểm soát quyền truy cập qua link
+        
+        - **Collaborative_Management (Manage Member)**: 
+          - **Invite_Member**: Mời người dùng vào album qua email hoặc username
+          - **Permission_Control**: Phân quyền thành viên trong album
+            * Viewer: Chỉ xem album
+            * Contributor: Có thể thêm, chỉnh sửa media trong album
+          - **Remove_Member**: Thu hồi quyền truy cập của thành viên khỏi album
+        
+        **3. INSTAGRAM INTEGRATION (THIRD-PARTY SYNC)**
+        
+        **Flow:**
+        1. **Connect_Account**: 
+           - Kết nối tài khoản Instagram qua OAuth2 login
+           - Sử dụng Instagram API để xác thực
+        
+        2. **Grant_Permissions**: 
+           - Người dùng cấp quyền cho hệ thống đọc media từ Instagram
+           - Hệ thống được phép truy cập ảnh và video của người dùng
+        
+        3. **Sync_Media**: 
+           - **Auto/Manual pull**: Đồng bộ ảnh và video từ Instagram
+             * Auto: Tự động đồng bộ theo lịch trình
+             * Manual: Đồng bộ thủ công khi người dùng yêu cầu
+           - **Storage**: Media được đồng bộ sẽ được lưu vào:
+             * Album riêng "Instagram Sync" hoặc
+             * Thư viện media chung của người dùng
+        
+        ### 5. EXAMPLE RESPONSES
+        
+        **If asked "Hệ thống này làm gì cho tôi?" or similar:**
+        "Hệ thống PinCap giúp bạn quản lý media một cách thông minh. Tôi có thể giúp bạn:
+        
+        - **Tìm kiếm media**: Bạn có thể yêu cầu tôi tìm media theo chủ đề, ví dụ: 'Tìm 10 media về robot'
+        
+        - **Gợi ý media**: Tôi sẽ gợi ý các media phù hợp với sở thích của bạn, ví dụ: 'Gợi ý 20 media về anime'
+        
+        - **Tạo album**: Sau khi gợi ý media, tôi có thể giúp bạn tạo album tự động với tên và mô tả phù hợp
+        
+        - **Thêm media mới**: Bạn có thể thêm media từ URL, tôi sẽ tự động phân tích và tạo metadata
+        
+        Ngoài ra, hệ thống còn hỗ trợ:
+        - Quản lý media với draft/published, privacy settings
+        - Tìm kiếm bằng text hoặc hình ảnh tương đồng
+        - Tương tác với media (reactions, comments, download, report)
+        - Chia sẻ album và quản lý cộng tác viên
+        - Đồng bộ media từ Instagram
+        
+        Bạn muốn thử tính năng nào trước?"
+        
+        **If asked about specific features:**
+        - **Media operations**: Explain CRUD operations, draft management, search capabilities, and interactions
+        - **Album collaboration**: Explain album sharing, member management, and permissions
+        - **Instagram sync**: Explain how to connect Instagram account and sync media
+        - **Privacy settings**: Explain Public vs Private settings for media and albums
+        - **Search types**: Explain text-based search vs image-based visual similarity search
+        
+        ### 6. BOUNDARIES
+        - Do NOT answer questions about:
+          * Personal information of other users
+          * System technical details (database structure, API keys, etc.)
+          * Unrelated topics (politics, religion, etc.)
+        - If asked inappropriate questions, politely redirect: "Tôi chỉ có thể giúp bạn với các câu hỏi về quản lý media trong hệ thống PinCap"
+        
+        ### 7. CONVERSATION FLOW
+        - Maintain context from conversation history
+        - If user asks follow-up questions, use previous context
+        - Be natural and conversational, not robotic
+        - When explaining features, be enthusiastic but not overly promotional
         """
         
         user_prompt = user_message
