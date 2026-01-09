@@ -23,7 +23,7 @@ class ChatbotService:
             "temperature": 0.7,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 2048,
+            "max_output_tokens": 8048,
         }
         
         self.gemini_service = GeminiService(
@@ -206,11 +206,13 @@ class ChatbotService:
             # Get media_url from DB (first one if list)
             media_url = media_urls_map.get(media_id, "")
             
-            # Store full data for RAG context (description needed for LLM, but not returned in response)
+            # Store full data for RAG context (title, description, ai_description needed for LLM, but not returned in response)
             media_list.append({
                 "id": media_id,
                 "media_url": media_url,
-                "description": source.get("description") or source.get("ai_description", ""),
+                "title": source.get("name", ""),
+                "description": source.get("description", ""),
+                "ai_description": source.get("ai_description", ""),
                 "popularity_score": round(score, 3),
                 "user_id": source.get("user_id")
             })
@@ -220,19 +222,31 @@ class ChatbotService:
     def format_rag_context(self, media_list: List[Dict[str, Any]]) -> str:
         """
         Format media list into RAG context string for LLM.
-        Simplified format - only essential info.
+        Includes title, description, and ai_description for better context.
         """
         if not media_list:
             return "Không tìm thấy media nào phù hợp."
         
         context_parts = []
         for i, media in enumerate(media_list, 1):
+            title = media.get("title", "")
             description = media.get("description", "")
-            # Only include description if it's meaningful (not empty)
+            ai_description = media.get("ai_description", "")
+            
+            # Build context with title, description, and ai_description
+            media_info_parts = []
+            
+            if title:
+                media_info_parts.append(f"Title: {title}")
+            
             if description:
-                context_parts.append(
-                    f"Media {i}: {description[:100]}"
-                )
+                media_info_parts.append(f"Description: {description[:200]}")
+            
+            if ai_description:
+                media_info_parts.append(f"AI Description: {ai_description[:200]}")
+            
+            if media_info_parts:
+                context_parts.append(f"Media {i}:\n" + "\n".join(media_info_parts))
             else:
                 context_parts.append(f"Media {i}")
         
@@ -257,6 +271,88 @@ class ChatbotService:
             })
         return result
 
+    async def filter_media_with_llm(
+        self,
+        media_list: List[Dict[str, Any]],
+        user_query: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Use LLM to filter and select only relevant media from the list.
+        Returns filtered media list with only the most relevant items.
+        """
+        if not media_list:
+            return []
+        
+        # Format media list with numbers for LLM to reference
+        media_context = self.format_rag_context(media_list)
+        
+        system_prompt = """
+        You are a media filtering assistant. Analyze the user's query and select ONLY the media that are truly relevant.
+        
+        ## TASK
+        Review all provided media and select ONLY those that match the user's query intent.
+        Be strict - only select media that are clearly relevant. If a media is only partially relevant or unclear, do NOT select it.
+        
+        ## OUTPUT FORMAT
+        Return ONLY a valid JSON array of media numbers (1-based index):
+        [1, 3, 5]
+        
+        Example: If Media 1, Media 3, and Media 5 are relevant, return [1, 3, 5]
+        If no media are relevant, return []
+        """
+        
+        user_prompt = f"""
+        User Query: {user_query}
+        
+        Media List:
+        {media_context}
+        
+        Analyze the user's query and select ONLY the media numbers that are truly relevant.
+        Return JSON array of selected media numbers only (e.g., [1, 3, 5]).
+        """
+        
+        history = conversation_history or []
+        prompt = self.gemini_service.buildPrompt(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            history=history
+        )
+        
+        # Debug log
+        print(f"\n🔍 [FILTER_MEDIA] Prompt:", flush=True)
+        print(json.dumps(prompt, indent=2, ensure_ascii=False), flush=True)
+        
+        response_text = await self.gemini_service.textToText(prompt)
+        
+        print(f"🔍 [FILTER_MEDIA] Response: {response_text[:200]}...", flush=True)
+        
+        # Parse JSON response to get selected media numbers
+        selected_indices = []
+        try:
+            # Try to extract JSON array from response
+            json_start = response_text.find("[")
+            json_end = response_text.rfind("]") + 1
+            if json_start != -1 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                selected_indices = json.loads(json_str)
+                # Convert to 0-based indices and filter
+                selected_indices = [idx - 1 for idx in selected_indices if isinstance(idx, int) and 1 <= idx <= len(media_list)]
+        except (json.JSONDecodeError, ValueError, IndexError) as e:
+            print(f"⚠️ [FILTER_MEDIA] Error parsing LLM response: {e}", flush=True)
+            # Fallback: return all media if parsing fails
+            return media_list
+        
+        # Filter media_list based on selected indices
+        if not selected_indices:
+            # If LLM selected nothing, return empty list
+            return []
+        
+        filtered_media = [media_list[i] for i in selected_indices if 0 <= i < len(media_list)]
+        
+        print(f"🔍 [FILTER_MEDIA] Selected {len(filtered_media)} out of {len(media_list)} media", flush=True)
+        
+        return filtered_media
 
     async def handle_search_media(
         self,
@@ -274,7 +370,7 @@ class ChatbotService:
             user_requested_limit = int(match.group(1))
         
         # System retrieves more from RAG for better selection, but user can only get max 10
-        rag_limit = 50  # Retrieve more for better selection
+        rag_limit = 30  # Retrieve more for LLM to filter from
         user_limit = min(user_requested_limit, 10) if user_requested_limit else 10  # Max 10 for user
         
         # Check if user requested too many
@@ -291,8 +387,15 @@ class ChatbotService:
                 "media": []
             }
         
+        # Use LLM to filter and select only relevant media
+        filtered_media_list = await self.filter_media_with_llm(media_list, user_message, conversation_history)
+        
+        # If LLM filtered out everything, use original list (fallback)
+        if not filtered_media_list:
+            filtered_media_list = media_list[:5]  # Fallback to top 5
+        
         # Limit to user's requested amount (max 10)
-        media_list = media_list[:user_limit]
+        media_list = filtered_media_list[:user_limit]
         
         # Format RAG context for LLM (use all retrieved for better context)
         rag_context = self.format_rag_context(media_list)
@@ -378,7 +481,7 @@ class ChatbotService:
             user_requested_limit = int(match.group(1))
         
         # System retrieves more from RAG for better selection, but user can only get max 10
-        rag_limit = 50  # Retrieve more for better selection
+        rag_limit = 30  # Retrieve more for LLM to filter from
         user_limit = min(user_requested_limit, 10) if user_requested_limit else 10  # Default 10, max 10 for user
         
         # Check if user requested too many
@@ -396,8 +499,15 @@ class ChatbotService:
                 "ask_confirmation": None
             }
         
+        # Use LLM to filter and select only relevant media
+        filtered_media_list = await self.filter_media_with_llm(media_list, user_message, conversation_history)
+        
+        # If LLM filtered out everything, use original list (fallback)
+        if not filtered_media_list:
+            filtered_media_list = media_list[:5]  # Fallback to top 5
+        
         # Limit to user's requested amount (max 10)
-        media_list = media_list[:user_limit]
+        media_list = filtered_media_list[:user_limit]
         
         # Format RAG context for LLM
         rag_context = self.format_rag_context(media_list)
