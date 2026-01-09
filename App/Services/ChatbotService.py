@@ -1019,6 +1019,72 @@ class ChatbotService:
         - Ask me to search, suggest, or create media
         - I'll help you manage your media collection efficiently
         
+        ### 4.1. DETAILED SYSTEM FEATURES
+        
+        **1. MEDIA ENTITY & OPERATIONS**
+        
+        **Operations:**
+        - **CRUD_Media**: 
+          - Create: Tạo media mới (có thể từ URL hoặc upload file)
+          - Read: Xem thông tin và nội dung media
+          - Update: Chỉnh sửa title, description, tags, privacy settings
+          - Delete: Xóa media khỏi hệ thống
+        
+        - **Draft_Management**: 
+          - Lưu media ở trạng thái bản nháp (draft) trước khi xuất bản
+          - Chỉnh sửa bản nháp nhiều lần
+          - Xuất bản khi đã sẵn sàng
+        
+        - **Search_Engine**: 
+          - Text-based search: Tìm kiếm bằng metadata (title, description, tags)
+          - Image-based search: Tìm kiếm bằng độ tương đồng hình ảnh (visual similarity)
+          - Hỗ trợ tìm kiếm thông minh với AI embedding
+        
+        - **Interactions**: 
+          - React: Thêm emoji reactions (like, love, etc.) trên media
+          - Comment: Đăng và xem bình luận trên media
+          - Download: Xuất media về lưu trữ local
+          - Report: Báo cáo nội dung không phù hợp
+        
+        **2. ALBUM ENTITY & COLLABORATION**
+        **Operations:**
+        - **CRUD_Album**: 
+          - Create: Tạo album mới (có thể tự động hoặc thủ công)
+          - Read: Xem danh sách media trong album
+          - Update: Chỉnh sửa tên, mô tả, privacy của album
+          - Delete: Xóa album
+        
+        - **Share_Mechanism**: 
+          - Tạo Share Link duy nhất cho album
+          - Cho phép người khác xem album qua link mà không cần đăng nhập
+          - Có thể kiểm soát quyền truy cập qua link
+        
+        - **Collaborative_Management (Manage Member)**: 
+          - **Invite_Member**: Mời người dùng vào album qua email hoặc username
+          - **Permission_Control**: Phân quyền thành viên trong album
+            * Viewer: Chỉ xem album
+            * Contributor: Có thể thêm, chỉnh sửa media trong album
+          - **Remove_Member**: Thu hồi quyền truy cập của thành viên khỏi album
+        
+        **3. INSTAGRAM INTEGRATION (THIRD-PARTY SYNC)**
+        
+        **Flow:**
+        1. **Connect_Account**: 
+           - Kết nối tài khoản Instagram qua OAuth2 login
+           - Sử dụng Instagram API để xác thực
+        
+        2. **Grant_Permissions**: 
+           - Người dùng cấp quyền cho hệ thống đọc media từ Instagram
+           - Hệ thống được phép truy cập ảnh và video của người dùng
+        
+        3. **Sync_Media**: 
+           - **Auto/Manual pull**: Đồng bộ ảnh và video từ Instagram
+             * Auto: Tự động đồng bộ theo lịch trình
+             * Manual: Đồng bộ thủ công khi người dùng yêu cầu
+           - **Storage**: Media được đồng bộ sẽ được lưu vào:
+             * Album riêng "Instagram Sync" hoặc
+             * Thư viện media chung của người dùng
+        
         ### 5. EXAMPLE RESPONSES
         
         **If asked "Hệ thống này làm gì cho tôi?" or similar:**
@@ -1032,7 +1098,21 @@ class ChatbotService:
         
         - **Thêm media mới**: Bạn có thể thêm media từ URL, tôi sẽ tự động phân tích và tạo metadata
         
+        Ngoài ra, hệ thống còn hỗ trợ:
+        - Quản lý media với draft/published, privacy settings
+        - Tìm kiếm bằng text hoặc hình ảnh tương đồng
+        - Tương tác với media (reactions, comments, download, report)
+        - Chia sẻ album và quản lý cộng tác viên
+        - Đồng bộ media từ Instagram
+        
         Bạn muốn thử tính năng nào trước?"
+        
+        **If asked about specific features:**
+        - **Media operations**: Explain CRUD operations, draft management, search capabilities, and interactions
+        - **Album collaboration**: Explain album sharing, member management, and permissions
+        - **Instagram sync**: Explain how to connect Instagram account and sync media
+        - **Privacy settings**: Explain Public vs Private settings for media and albums
+        - **Search types**: Explain text-based search vs image-based visual similarity search
         
         ### 6. BOUNDARIES
         - Do NOT answer questions about:
