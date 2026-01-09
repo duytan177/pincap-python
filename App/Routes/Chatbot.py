@@ -12,6 +12,7 @@ class ChatbotRequest(BaseModel):
     conversation_history: Optional[List[Dict[str, str]]] = None
     suggested_media_ids: Optional[List[str]] = None
     file_url: Optional[str] = None
+    token: Optional[str] = None
 
 
 class ChatbotResponse(BaseModel):
@@ -45,7 +46,8 @@ async def chatbot(request: ChatbotRequest):
             user_id=request.user_id,
             conversation_history=request.conversation_history,
             suggested_media_ids=request.suggested_media_ids,
-            file_url=request.file_url
+            file_url=request.file_url,
+            token=request.token
         )
         
         return response

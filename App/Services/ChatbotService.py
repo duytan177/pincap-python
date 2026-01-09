@@ -1,5 +1,9 @@
 import json
 import re
+import os
+import io
+import asyncio
+import aiohttp
 from typing import List, Dict, Any, Optional
 from App.Services.GeminiService import GeminiService
 from App.Services.ElasticsearchService import ElasticsearchService
@@ -677,14 +681,90 @@ class ChatbotService:
             }
         }
 
+    async def create_media_via_api(
+        self,
+        file_url: str,
+        media_name: str,
+        description: str,
+        tags_name: List[str],
+        user_id: str,
+        token: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call API to create media in the system.
+        Returns the created media response with id.
+        """
+        try:
+            # Download file from URL
+            from App.Services.MediaIngestService import MediaIngestService
+            upload_file = await asyncio.to_thread(MediaIngestService.download_as_uploadfile, file_url)
+            
+            if not upload_file:
+                print(f"❌ Failed to download file from URL: {file_url}", flush=True)
+                return None
+            
+            # Get IP_SERVICE from environment
+            ip_service = os.getenv("IP_SERVICE", "127.0.0.1")
+            api_url = f"http://{ip_service}:80/api/medias"
+            
+            # Prepare multipart form data
+            data = aiohttp.FormData()
+            
+            # Read file content
+            await upload_file.seek(0)
+            file_content = await upload_file.read()
+            file_like = io.BytesIO(file_content)
+            
+            # Add file as array (media must be an array)
+            data.add_field(
+                "media[]",
+                file_like,
+                filename=upload_file.filename,
+                content_type=upload_file.content_type or "image/jpeg"
+            )
+            
+            # Add other fields
+            data.add_field("media_name", media_name)
+            data.add_field("description", description or "")
+            data.add_field("is_created", "false")
+            
+            # Add tags as array (tags_name must be an array)
+            # Add each tag separately with tags_name[] format
+            for tag in tags_name:
+                data.add_field("tags_name[]", tag)
+            
+            # Prepare headers with Bearer token
+            headers = {}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            
+            # Make API call
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, data=data, headers=headers) as resp:
+                    # Accept both 200 (OK) and 201 (Created) as success
+                    if resp.status not in [200, 201]:
+                        error_text = await resp.text()
+                        print(f"❌ API create media failed: {resp.status} - {error_text}", flush=True)
+                        return None
+                    
+                    response_data = await resp.json()
+                    print(f"✅ Media created successfully: {response_data.get('media', {}).get('id')}", flush=True)
+                    return response_data
+                    
+        except Exception as e:
+            print(f"❌ Error creating media via API: {str(e)}", flush=True)
+            return None
+
     async def handle_create_media_from_input(
         self,
         user_message: str,
+        user_id: str,
         file_url: Optional[str] = None,
-        conversation_history: Optional[List[Dict[str, str]]] = None
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Handle CREATE_MEDIA_FROM_INPUT intent: analyze input and generate metadata.
+        Handle CREATE_MEDIA_FROM_INPUT intent: analyze input, generate metadata, and create media.
         """
         # Extract URL from message if not provided
         if not file_url:
@@ -718,17 +798,90 @@ class ChatbotService:
                 self.gemini_service
             )
             
+            title = metadata.get("title", "")
+            description = metadata.get("description", "")
+            tags = metadata.get("tags", [])
+            
+            # Create media via API
+            create_response = await self.create_media_via_api(
+                file_url=file_url,
+                media_name=title,
+                description=description,
+                tags_name=tags,
+                user_id=user_id,
+                token=token
+            )
+            
+            if not create_response:
+                return {
+                    "intent": "CREATE_MEDIA_FROM_INPUT",
+                    "error": "Không thể tạo media trong hệ thống."
+                }
+            
+            # Extract media id from response
+            created_media = create_response.get("media", {})
+            media_id = created_media.get("id")
+            
+            if not media_id:
+                return {
+                    "intent": "CREATE_MEDIA_FROM_INPUT",
+                    "error": "Tạo media thành công nhưng không nhận được ID."
+                }
+            
+            # Generate natural response using LLM
+            system_prompt = """
+            You are a helpful media management assistant. The user just created a DRAFT media (bản nháp).
+            
+            ## TASK
+            Generate a natural, friendly response in Vietnamese to inform the user that their media draft has been created.
+            IMPORTANT: This is only a DRAFT - the user needs to check it in the draft section before creating the final version.
+            
+            ## RULES
+            - Answer in Vietnamese
+            - Be natural and friendly
+            - Keep it concise (2-3 sentences)
+            - Don't be too formal or robotic
+            - IMPORTANT: Clearly mention that this is a DRAFT (bản nháp)
+            - Remind the user to check the draft section to review before creating the final version
+            - Be helpful and guide the user to the next step
+            """
+            
+            user_prompt = f"""
+            User just created a DRAFT media (bản nháp) with:
+            - Title: {title}
+            - Description: {description[:100] if description else 'N/A'}
+            - Tags: {', '.join(tags[:5]) if tags else 'N/A'}
+            
+            Generate a natural, friendly response to inform the user that:
+            1. The media DRAFT has been created successfully
+            2. This is only a draft (bản nháp)
+            3. They should check it in the draft section to review before creating the final version
+            
+            Be conversational and helpful.
+            """
+            
+            history = conversation_history or []
+            prompt = self.gemini_service.buildPrompt(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                history=history
+            )
+            
+            # Generate answer using LLM
+            answer = await self.gemini_service.textToText(prompt)
+            
+            print(f"🔍 [CREATE_MEDIA] LLM Response: {answer[:200]}...", flush=True)
+            
             return {
                 "intent": "CREATE_MEDIA_FROM_INPUT",
-                "media": {
-                    "title": metadata.get("title", ""),
-                    "description": metadata.get("description", ""),
-                    "tags": metadata.get("tags", []),
-                    "media_url": file_url
-                },
-                "frontend_link": "/media/create?prefill=true"
+                "answer": answer.strip(),
+                "media": [{
+                    "id": media_id,
+                    "media_url": created_media.get("media_url", file_url)
+                }]
             }
         except Exception as e:
+            print(f"❌ Error in handle_create_media_from_input: {str(e)}", flush=True)
             return {
                 "intent": "CREATE_MEDIA_FROM_INPUT",
                 "error": f"Lỗi khi xử lý media: {str(e)}"
@@ -780,7 +933,8 @@ class ChatbotService:
         user_id: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         suggested_media_ids: Optional[List[str]] = None,
-        file_url: Optional[str] = None
+        file_url: Optional[str] = None,
+        token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Main entry point: process user message and return structured response.
@@ -805,7 +959,7 @@ class ChatbotService:
             return await self.handle_confirm_create_album(user_message, suggested_media_ids, conversation_history)
         
         elif intent == "CREATE_MEDIA_FROM_INPUT":
-            return await self.handle_create_media_from_input(user_message, file_url, conversation_history)
+            return await self.handle_create_media_from_input(user_message, user_id, file_url, conversation_history, token)
         
         else:  # GENERAL_QA
             return await self.handle_general_qa(user_message, conversation_history)
